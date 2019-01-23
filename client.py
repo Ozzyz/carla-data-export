@@ -452,25 +452,34 @@ class CarlaGame(object):
         pygame.display.flip()
 
 
+def create_training_data(array, agent_list):
+    # https://davidstutz.de/kittis-3d-object-detection-benchmark/
+    """ The 3D bounding boxes KITTI expects are in 2 co-ordinates. The size ( height, weight, and length) are in the object co-ordinate , 
+    and the center on the bounding box is in the camera co-ordinate. """
+    # TODO: Iterate through all agents, find out which ones are in frame, extract information about their bounding boxes
+    # and class, save to kitti format. 
 
 def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
     """ Creates bounding boxes for a given agent and camera/world calibration matrices.
         Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
+
+    
+
     # get the needed transformations
     # remember to explicitly make it Transform() so you can use transform_points()
     ext = None
     if agent.HasField('pedestrian'):
         agent_transform = Transform(agent.pedestrian.transform)
         bbox_transform = Transform(agent.pedestrian.bounding_box.transform)
-        # get the box extent
         ext = agent.pedestrian.bounding_box.extent
     if agent.HasField('vehicle'):
         agent_transform = Transform(agent.vehicle.transform)
         bbox_transform = Transform(agent.vehicle.bounding_box.transform)
-        # get the box extent
         ext = agent.vehicle.bounding_box.extent
     else:
+        # Refrain from drawing anything to the array for this agent
         return array
+        
     # https://github.com/carla-simulator/carla/commits/master/Docs/img/vehicle_bounding_box.png 
     # 8 bounding box vertices relative to (0,0,0)
     bbox = np.array([
