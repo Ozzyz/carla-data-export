@@ -76,9 +76,10 @@ MINI_WINDOW_HEIGHT = 180
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 
-STEPS_BETWEEN_RECORDINGS = 20 # How many frames to wait between each capture of screen, bounding boxes and lidar
+STEPS_BETWEEN_RECORDINGS = 100 # How many frames to wait between each capture of screen, bounding boxes and lidar
 OUTPUT_FOLDER = "_out"
 
+MAX_RENDER_DEPTH = 100 # Meters 
 # np.set_printoptions(precision=2, suppress=True)
 np.set_printoptions(suppress=True)
 
@@ -178,10 +179,7 @@ def make_carla_settings(args):
 
     camera_to_car_transform = camera0.get_unreal_transform()
     # camera_to_car_transform = camera0.get_transform()
-
     return settings, k, camera_to_car_transform
-
-
 
 
 class CarlaGame(object):
@@ -363,7 +361,6 @@ class CarlaGame(object):
         print_over_same_line(message)
 
     def _on_render(self):
-
         if self._main_image is not None:
             array = image_converter.to_rgb_array(self._main_image)
             
@@ -430,7 +427,8 @@ class CarlaGame(object):
 def save_lidar_data(filename, lidar_measurement):
     if lidar_measurement is not None:
         lidar_measurement.point_cloud.save_to_disk(filename)
-
+    else:
+        print("Warning! Lidar data is none")
 def save_kitti_data(filename, datapoints):
     with open(filename, 'w') as f:
         out_str = "\n".join([str(point) for point in datapoints if point])
@@ -514,7 +512,15 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         # 2d pixel coordinates
         pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
         # draw the points on screen
-        if pos2d[2] > 0: # if the point is in front of the camera # TODO: This should check if the vertex is occluded
+        print(transformed_3d_pos)
+        print(pos2d)
+        # TODO: This should check if the vertex is occluded by checking if the depth (pos2d[2]) is smaller than the length to the vertex
+        print("Shape of transformed 3d pos: ", transformed_3d_pos.shape)
+        car_distance = np.sqrt(transformed_3d_pos.T.dot(transformed_3d_pos))
+        vertex_depth = pos2d[2] # The actual rendered depth (may be wall or other object instead of vertex)
+        print("Car distance: ", car_distance)
+        print("Vertex depth: ", vertex_depth)
+        if MAX_RENDER_DEPTH > vertex_depth > 0 and math.isclose(car_distance, vertex_depth, rel_tol=0.05): # if the point is in front of the camera 
             x_2d = WINDOW_WIDTH - pos2d[0]
             y_2d = WINDOW_HEIGHT - pos2d[1]
             vertices_pos2d.append((y_2d, x_2d))
@@ -531,6 +537,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
     datapoint.set_3d_object_dimensions(ext)
     draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
     return array, datapoint
+
 
 def calc_projected_2d_bbox(vertices_pos2d):
     """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
