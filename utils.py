@@ -62,13 +62,18 @@ class KittiDescriptor:
         self.bbox = bbox
 
     def set_3d_object_dimensions(self, bbox_extent):
-        self.dimensions = bbox_extent
+        # Bbox extent consists of x,y and z. 
+        # TODO: Multiply these by 2 to get full bbox extend instead of half-box
+        self.dimensions = "{} {} {}".format(bbox_extent.x, bbox_extent.y, bbox_extent.z)
 
     def set_3b_object_location(self, obj_location):
-        self.location = obj_location
+        # TODO: x and y should be inverted
+        # Object location is four values (x, y, z, w). We only care about three of them (xyz)
+        xyz = [str(float(x)) for x in obj_location][0:3]
+        self.location = " ".join(xyz)
 
     def set_rotation_y(self, rotation_y: float):
-        assert -pi <= rotation_y <= pi, "Rotation y must be in range [-pi..pi]" 
+        assert -pi <= rotation_y <= pi, "Rotation y must be in range [-pi..pi] - found {}".format(rotation_y) 
         self.rotation_y = rotation_y
 
     def __str__(self):
@@ -77,6 +82,7 @@ class KittiDescriptor:
             bbox_format = " "
         else:
             bbox_format = " ".join([str(x) for x in self.bbox])
+        
         return "{} {} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, bbox_format, self.dimensions, self.location, self.rotation_y)    
 
 

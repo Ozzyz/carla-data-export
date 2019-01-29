@@ -65,6 +65,7 @@ from carla.tcp import TCPConnectionError
 from carla.util import print_over_same_line
 from carla.transform import Transform
 from utils import KittiDescriptor, Timer
+from camera_utils import *
 import cv2
 
 
@@ -76,7 +77,7 @@ MINI_WINDOW_HEIGHT = 180
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 
-STEPS_BETWEEN_RECORDINGS = 100 # How many frames to wait between each capture of screen, bounding boxes and lidar
+STEPS_BETWEEN_RECORDINGS = 20 # How many frames to wait between each capture of screen, bounding boxes and lidar
 OUTPUT_FOLDER = "_out"
 
 MAX_RENDER_DEPTH = 100 # Meters 
@@ -157,18 +158,17 @@ def make_carla_settings(args):
     camera0.set_rotation(0.0, 0.0, 0.0)
     settings.add_sensor(camera0)
 
-    if args.lidar:
-        lidar = sensor.Lidar('Lidar32')
-        lidar.set_position(0, 0, 2.5)
-        lidar.set_rotation(0, 0, 0)
-        lidar.set(
-            Channels=32,
-            Range=50,
-            PointsPerSecond=100000,
-            RotationFrequency=20,
-            UpperFovLimit=10,
-            LowerFovLimit=-30)
-        settings.add_sensor(lidar)
+    lidar = sensor.Lidar('Lidar32')
+    lidar.set_position(0, 0, 2.5)
+    lidar.set_rotation(0, 0, 0)
+    lidar.set(
+        Channels=32,
+        Range=50,
+        PointsPerSecond=100000,
+        RotationFrequency=10,
+        UpperFovLimit=10,
+        LowerFovLimit=-30)
+    settings.add_sensor(lidar)
 
     # (Intrinsic) K Matrix
     k = np.identity(3)
@@ -361,18 +361,25 @@ class CarlaGame(object):
         print_over_same_line(message)
 
     def _on_render(self):
+        all_datapoints = []
+        save_data_now = True
         if self._main_image is not None:
             array = image_converter.to_rgb_array(self._main_image)
-            
             array = array.copy() # array.setflags(write=1)
             # Stores all datapoints for the current frames
-            all_datapoints = []
+            
             for agent in self._measurements.non_player_agents:
-                array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array)
-                all_datapoints.append(kitti_datapoint)
+                if is_class_agent(agent):
+                    array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array)
+                    rotation_y = self.get_relative_rotation_y(agent) % math.pi
+                    kitti_datapoint.set_rotation_y(rotation_y)
+                    all_datapoints.append(kitti_datapoint)
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
-          
+        else:
+            print("Main image is None!")
+            save_data_now = False
+
         if self._lidar_measurement is not None:
             lidar_data = np.array(self._lidar_measurement.data[:, :2])
             lidar_data *= 2.0
@@ -386,6 +393,9 @@ class CarlaGame(object):
             lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
             surface = pygame.surfarray.make_surface(lidar_img)
             self._display.blit(surface, (10, 10))
+        else:
+            print("Lidar data is None!")
+            save_data_now = False
 
         if self._map_view is not None:
             array = self._map_view
@@ -415,25 +425,51 @@ class CarlaGame(object):
             self._display.blit(surface, (WINDOW_WIDTH, 0))
         # Save screen, lidar and kitti training labels
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
-            lidar_fname = os.path.join(OUTPUT_FOLDER, 'lidar_{}.ply'.format(self._timer.step))
-            kitti_fname = os.path.join(OUTPUT_FOLDER, '{}.txt'.format(self._timer.step))
-            img_fname = os.path.join(OUTPUT_FOLDER, '{}.png'.format(self._timer.step))
-            cv2.imwrite(img_fname, array)
-            save_kitti_data(kitti_fname, all_datapoints)
-            save_lidar_data(lidar_fname, self._lidar_measurement)
+            if save_data_now:
+                lidar_fname = os.path.join(OUTPUT_FOLDER, 'lidar_{}.ply'.format(self._timer.step))
+                kitti_fname = os.path.join(OUTPUT_FOLDER, '{}.txt'.format(self._timer.step))
+                img_fname = os.path.join(OUTPUT_FOLDER, '{}.png'.format(self._timer.step))
+                save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
+                save_kitti_data(kitti_fname, all_datapoints)
+                save_lidar_data(lidar_fname, self._lidar_measurement)
+                
+            else:
+                print("Warning: Could not save training data - lidar or image data may be None")
 
         pygame.display.flip()
 
+    def get_relative_rotation_y(self, agent):
+        """ Returns the relative rotation of the agent to the camera in yaw
+        The relative rotation is the difference between the camera rotation (on car) and the agent rotation"""
+        # We only car about the rotation for the classes we do detection on
+        if agent.vehicle.transform:
+            rot_agent = agent.vehicle.transform.rotation.yaw
+            rot_car = self._measurements.player_measurements.transform.rotation.yaw
+            return degrees_to_radians(rot_agent - rot_car)
+
+
+def is_class_agent(agent):
+    """ Returns true if the agent is of the classes that we want to detect """
+    return agent.HasField('vehicle') or agent.HasField('pedestrian')
+
+def degrees_to_radians(degrees):
+    return degrees * math.pi / 180
+
+def save_image_data(filename, image):
+    print("Wrote image data to ", filename)
+    # Convert to correct color format
+    color_fmt = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(filename, color_fmt)
+
 def save_lidar_data(filename, lidar_measurement):
-    if lidar_measurement is not None:
-        lidar_measurement.point_cloud.save_to_disk(filename)
-    else:
-        print("Warning! Lidar data is none")
+    print("Wrote lidar data to ", filename)
+    lidar_measurement.point_cloud.save_to_disk(filename)
+
 def save_kitti_data(filename, datapoints):
     with open(filename, 'w') as f:
         out_str = "\n".join([str(point) for point in datapoints if point])
         f.write(out_str)
-
+    print("Wrote kitti data to ", filename)
 def create_training_data(array, agent_list):
     # https://davidstutz.de/kittis-3d-object-detection-benchmark/
     """ The 3D bounding boxes KITTI expects are in 2 co-ordinates. The size ( height, weight, and length) are in the object co-ordinate , 
@@ -453,7 +489,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         bbox_transform = Transform(agent.pedestrian.bounding_box.transform)
         ext = agent.pedestrian.bounding_box.extent
         location = agent.pedestrian.transform.location
-    if agent.HasField('vehicle'):
+    elif agent.HasField('vehicle'):
         obj_type = 'Car'
         agent_transform = Transform(agent.vehicle.transform)
         bbox_transform = Transform(agent.vehicle.bounding_box.transform)
@@ -461,6 +497,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         location = agent.vehicle.transform.location
     else:
         # Refrain from drawing anything to the array for this agent
+        print("Error - could not get bounding boxes for agent ", agent)
         return array, []
     datapoint.set_type(obj_type)
 
@@ -512,14 +549,14 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         # 2d pixel coordinates
         pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
         # draw the points on screen
-        print(transformed_3d_pos)
-        print(pos2d)
+        #print(transformed_3d_pos)
+        #print(pos2d)
         # TODO: This should check if the vertex is occluded by checking if the depth (pos2d[2]) is smaller than the length to the vertex
-        print("Shape of transformed 3d pos: ", transformed_3d_pos.shape)
+        #print("Shape of transformed 3d pos: ", transformed_3d_pos.shape)
         car_distance = np.sqrt(transformed_3d_pos.T.dot(transformed_3d_pos))
         vertex_depth = pos2d[2] # The actual rendered depth (may be wall or other object instead of vertex)
-        print("Car distance: ", car_distance)
-        print("Vertex depth: ", vertex_depth)
+        #print("Calr distance: ", car_distance)
+        #print("Vertex depth: ", vertex_depth)
         if MAX_RENDER_DEPTH > vertex_depth > 0 and math.isclose(car_distance, vertex_depth, rel_tol=0.05): # if the point is in front of the camera 
             x_2d = WINDOW_WIDTH - pos2d[0]
             y_2d = WINDOW_HEIGHT - pos2d[1]
@@ -531,80 +568,16 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
     
     midpoint_camera_proj = draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
     datapoint.set_3b_object_location(midpoint_camera_proj)
+    # NOTE! This means that all vertices of the object has to be visible (not occluded)
     if None not in vertices_pos2d:
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
+        print("Projected 2d bounding box: ", bbox_2d)
         datapoint.set_bbox(bbox_2d)
     datapoint.set_3d_object_dimensions(ext)
     draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
     return array, datapoint
 
 
-def calc_projected_2d_bbox(vertices_pos2d):
-    """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
-        Returns left, top, right, bottom pixel coordinates for the 2d bounding box as a list of four values.
-    """
-    
-    legal_pos2d = list(filter(lambda x: x is not None, vertices_pos2d))
-    
-    x_coords, y_coords = [int(x[0][0]) for x in legal_pos2d], [int(x[1][0]) for x in legal_pos2d]
-    print(x_coords)
-    min_x, max_x = min(x_coords), max(x_coords)
-    min_y, max_y = min(y_coords), max(y_coords)
-    return [min_x, min_y, max_x, max_y]
-
-def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat):
-    # Calculate the midpoint of the bottom chassis
-    # This is used since kitti treats this point as the location of the car
-    midpoint_vector = np.array([
-        [location.x],  # [[X,
-            [location.y],  #   Y,
-            [location.z],  #   Z,
-            [1.0]           #   1.0]]
-    ])
-    transformed_3d_midpoint = proj_to_camera(midpoint_vector, extrinsic_mat)
-
-    pos2d_midpoint = proj_to_2d(transformed_3d_midpoint, intrinsic_mat)
-    if pos2d_midpoint[2] > 0: # if the point is in front of the camera
-        x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
-        y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
-        draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
-    return transformed_3d_midpoint
-
-
-def proj_to_camera(pos_vector, extrinsic_mat):
-    # transform the points to camera
-    transformed_3d_pos = np.dot(inv(extrinsic_mat), pos_vector)
-    return transformed_3d_pos
-
-def proj_to_2d(camera_pos_vector, intrinsic_mat):
-    # transform the points to 2D
-        pos2d = np.dot(intrinsic_mat, camera_pos_vector[:3])
-        # normalize the 2D points
-        pos2d = np.array([
-            pos2d[0] / pos2d[2],
-            pos2d[1] / pos2d[2],
-            pos2d[2]
-        ])
-        return pos2d
-
-def draw_3d_bounding_box(array, vertices_pos2d, vertex_graph):
-    """ Draws lines from each vertex to all connected vertices """
-    # Note that this can be sped up by not drawing duplicate lines
-    for vertex_idx in vertex_graph:
-        neighbour_idxs = vertex_graph[vertex_idx]
-        from_pos2d = vertices_pos2d[vertex_idx]
-        for neighbour_idx in neighbour_idxs:
-            to_pos2d = vertices_pos2d[neighbour_idx]
-            if from_pos2d is None or to_pos2d is None:
-                continue
-            y1, x1 = from_pos2d[0], from_pos2d[1]
-            y2, x2 = to_pos2d[0], to_pos2d[1]
-            # Only stop drawing lines if both are outside
-            if not point_in_canvas((y1, x1)) and not point_in_canvas((y2, x2)):
-                continue
-            for x, y in get_line(x1, y1, x2, y2):
-                if point_in_canvas((y, x)):
-                    array[int(y), int(x)] = (255, 0, 0)
 
 def main():
     argparser = argparse.ArgumentParser(

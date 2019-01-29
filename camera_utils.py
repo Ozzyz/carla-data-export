@@ -1,0 +1,69 @@
+
+
+
+def calc_projected_2d_bbox(vertices_pos2d):
+    """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
+        Returns left, top, right, bottom pixel coordinates for the 2d bounding box as a list of four values.
+    """
+    
+    legal_pos2d = list(filter(lambda x: x is not None, vertices_pos2d))
+    
+    x_coords, y_coords = [int(x[0][0]) for x in legal_pos2d], [int(x[1][0]) for x in legal_pos2d]
+    print(x_coords)
+    min_x, max_x = min(x_coords), max(x_coords)
+    min_y, max_y = min(y_coords), max(y_coords)
+    return [min_x, min_y, max_x, max_y]
+
+def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat):
+    # Calculate the midpoint of the bottom chassis
+    # This is used since kitti treats this point as the location of the car
+    midpoint_vector = np.array([
+        [location.x],  # [[X,
+            [location.y],  #   Y,
+            [location.z],  #   Z,
+            [1.0]           #   1.0]]
+    ])
+    transformed_3d_midpoint = proj_to_camera(midpoint_vector, extrinsic_mat)
+
+    pos2d_midpoint = proj_to_2d(transformed_3d_midpoint, intrinsic_mat)
+    if pos2d_midpoint[2] > 0: # if the point is in front of the camera
+        x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
+        y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
+        draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
+    return transformed_3d_midpoint
+
+
+def proj_to_camera(pos_vector, extrinsic_mat):
+    # transform the points to camera
+    transformed_3d_pos = np.dot(inv(extrinsic_mat), pos_vector)
+    return transformed_3d_pos
+
+def proj_to_2d(camera_pos_vector, intrinsic_mat):
+    # transform the points to 2D
+        pos2d = np.dot(intrinsic_mat, camera_pos_vector[:3])
+        # normalize the 2D points
+        pos2d = np.array([
+            pos2d[0] / pos2d[2],
+            pos2d[1] / pos2d[2],
+            pos2d[2]
+        ])
+        return pos2d
+
+def draw_3d_bounding_box(array, vertices_pos2d, vertex_graph):
+    """ Draws lines from each vertex to all connected vertices """
+    # Note that this can be sped up by not drawing duplicate lines
+    for vertex_idx in vertex_graph:
+        neighbour_idxs = vertex_graph[vertex_idx]
+        from_pos2d = vertices_pos2d[vertex_idx]
+        for neighbour_idx in neighbour_idxs:
+            to_pos2d = vertices_pos2d[neighbour_idx]
+            if from_pos2d is None or to_pos2d is None:
+                continue
+            y1, x1 = from_pos2d[0], from_pos2d[1]
+            y2, x2 = to_pos2d[0], to_pos2d[1]
+            # Only stop drawing lines if both are outside
+            if not point_in_canvas((y1, x1)) and not point_in_canvas((y2, x2)):
+                continue
+            for x, y in get_line(x1, y1, x2, y2):
+                if point_in_canvas((y, x)):
+                    array[int(y), int(x)] = (255, 0, 0)
