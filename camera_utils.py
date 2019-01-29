@@ -1,5 +1,6 @@
-
-
+import numpy as np
+from numpy.linalg import pinv, inv
+from datageneration import WINDOW_HEIGHT, WINDOW_WIDTH
 
 def calc_projected_2d_bbox(vertices_pos2d):
     """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
@@ -29,7 +30,7 @@ def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_
     if pos2d_midpoint[2] > 0: # if the point is in front of the camera
         x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
         y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
-        draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
+        #draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
     return transformed_3d_midpoint
 
 
@@ -67,3 +68,57 @@ def draw_3d_bounding_box(array, vertices_pos2d, vertex_graph):
             for x, y in get_line(x1, y1, x2, y2):
                 if point_in_canvas((y, x)):
                     array[int(y), int(x)] = (255, 0, 0)
+
+
+
+def point_in_canvas(pos):
+    """Return true if point is in canvas"""
+    if (pos[0] >= 0) and (pos[0] < WINDOW_HEIGHT) and (pos[1] >= 0) and (pos[1] < WINDOW_WIDTH):
+        return True
+    return False
+
+def get_line(x1, y1, x2, y2):
+    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+    #print("Calculating line from {},{} to {},{}".format(x1,y1,x2,y2))
+    points = []
+    issteep = abs(y2-y1) > abs(x2-x1)
+    if issteep:
+        x1, y1 = y1, x1
+        x2, y2 = y2, x2
+    rev = False
+    if x1 > x2:
+        x1, x2 = x2, x1
+        y1, y2 = y2, y1
+        rev = True
+    deltax = x2 - x1
+    deltay = abs(y2-y1)
+    error = int(deltax / 2)
+    y = y1
+    ystep = None
+    if y1 < y2:
+        ystep = 1
+    else:
+        ystep = -1
+    for x in range(x1, x2 + 1):
+        if issteep:
+            points.append((y, x))
+        else:
+            points.append((x, y))
+        error -= deltay
+        if error < 0:
+            y += ystep
+            error += deltax
+    # Reverse the list if the coordinates were reversed
+    if rev:
+        points.reverse()
+    return points
+
+def draw_rect(array, pos, size, color=(255, 0, 255)):
+    """Draws a rect"""
+    point_0 = (pos[0]-size/2, pos[1]-size/2)
+    point_1 = (pos[0]+size/2, pos[1]+size/2)
+    if point_in_canvas(point_0) and point_in_canvas(point_1):
+        for i in range(size):
+            for j in range(size):
+                array[int(point_0[0]+i), int(point_0[1]+j)] = color
+

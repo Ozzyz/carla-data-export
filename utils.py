@@ -29,7 +29,7 @@ class KittiDescriptor:
         self.type = None
         self.truncated = 0
         self.occluded = 0
-        self.alpha = None
+        self.alpha = -10
         self.bbox = None
         self.dimensions = None
         self.location = None
@@ -67,10 +67,12 @@ class KittiDescriptor:
         self.dimensions = "{} {} {}".format(bbox_extent.x, bbox_extent.y, bbox_extent.z)
 
     def set_3b_object_location(self, obj_location):
-        # TODO: x and y should be inverted
+        # x and y should be inverted since kitti expects positive x and y to be right and up, respectively
         # Object location is four values (x, y, z, w). We only care about three of them (xyz)
-        xyz = [str(float(x)) for x in obj_location][0:3]
-        self.location = " ".join(xyz)
+        xyz = [float(x) for x in obj_location][0:3]
+        xyz[0] *= -1
+        xyz[1] *= -1
+        self.location = " ".join(map(str, xyz))
 
     def set_rotation_y(self, rotation_y: float):
         assert -pi <= rotation_y <= pi, "Rotation y must be in range [-pi..pi] - found {}".format(rotation_y) 

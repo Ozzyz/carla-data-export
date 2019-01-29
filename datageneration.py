@@ -69,8 +69,8 @@ from camera_utils import *
 import cv2
 
 
-WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
+WINDOW_WIDTH = 1920
+WINDOW_HEIGHT = 1080
 MINI_WINDOW_WIDTH = 320
 MINI_WINDOW_HEIGHT = 180
 
@@ -80,60 +80,19 @@ WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 STEPS_BETWEEN_RECORDINGS = 20 # How many frames to wait between each capture of screen, bounding boxes and lidar
 OUTPUT_FOLDER = "_out"
 
+GEN_DATA = False
+
+folders = ['calib', 'image_2', 'label_2', 'velodyne']
+for folder in folders:
+    directory = os.path.join(OUTPUT_FOLDER, folder)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+
 MAX_RENDER_DEPTH = 100 # Meters 
 # np.set_printoptions(precision=2, suppress=True)
 np.set_printoptions(suppress=True)
 
-def point_in_canvas(pos):
-    """Return true if point is in canvas"""
-    if (pos[0] >= 0) and (pos[0] < WINDOW_HEIGHT) and (pos[1] >= 0) and (pos[1] < WINDOW_WIDTH):
-        return True
-    return False
-
-def get_line(x1, y1, x2, y2):
-    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-    #print("Calculating line from {},{} to {},{}".format(x1,y1,x2,y2))
-    points = []
-    issteep = abs(y2-y1) > abs(x2-x1)
-    if issteep:
-        x1, y1 = y1, x1
-        x2, y2 = y2, x2
-    rev = False
-    if x1 > x2:
-        x1, x2 = x2, x1
-        y1, y2 = y2, y1
-        rev = True
-    deltax = x2 - x1
-    deltay = abs(y2-y1)
-    error = int(deltax / 2)
-    y = y1
-    ystep = None
-    if y1 < y2:
-        ystep = 1
-    else:
-        ystep = -1
-    for x in range(x1, x2 + 1):
-        if issteep:
-            points.append((y, x))
-        else:
-            points.append((x, y))
-        error -= deltay
-        if error < 0:
-            y += ystep
-            error += deltax
-    # Reverse the list if the coordinates were reversed
-    if rev:
-        points.reverse()
-    return points
-
-def draw_rect(array, pos, size, color=(255, 0, 255)):
-    """Draws a rect"""
-    point_0 = (pos[0]-size/2, pos[1]-size/2)
-    point_1 = (pos[0]+size/2, pos[1]+size/2)
-    if point_in_canvas(point_0) and point_in_canvas(point_1):
-        for i in range(size):
-            for j in range(size):
-                array[int(point_0[0]+i), int(point_0[1]+j)] = color
 
 def rand_color(seed):
     """Return random color based on a seed"""
@@ -147,25 +106,30 @@ def make_carla_settings(args):
     settings.set(
         SynchronousMode=False,
         SendNonPlayerAgentsInfo=True,
-        NumberOfVehicles=1,
+        NumberOfVehicles=10,
         NumberOfPedestrians=1,
         WeatherId=random.choice([1, 3, 7, 8, 14]),
         QualityLevel=args.quality_level)
     settings.randomize_seeds()
     camera0 = sensor.Camera('CameraRGB')
     camera0.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-    camera0.set_position(2.0, 0.0, 1.4)
+    #camera0.set_position(2.0, 0.0, 1.4)
+    #camera0.set_rotation(0.0, 0.0, 0.0)
+    camera0.set_position(0, 0.0, 1.8)
     camera0.set_rotation(0.0, 0.0, 0.0)
     settings.add_sensor(camera0)
 
     lidar = sensor.Lidar('Lidar32')
-    lidar.set_position(0, 0, 2.5)
+    #lidar.set_position(0, 0, 2.5)
+    #lidar.set_rotation(0, 0, 0)
+    lidar.set_position(0, 0.0, 1.8)
     lidar.set_rotation(0, 0, 0)
+    
     lidar.set(
         Channels=32,
         Range=50,
         PointsPerSecond=100000,
-        RotationFrequency=10,
+        RotationFrequency=20,
         UpperFovLimit=10,
         LowerFovLimit=-30)
     settings.add_sensor(lidar)
@@ -176,7 +140,7 @@ def make_carla_settings(args):
     k[1, 2] = WINDOW_HEIGHT_HALF
     k[0, 0] = k[1, 1] = WINDOW_WIDTH / \
         (2.0 * math.tan(90.0 * math.pi / 360.0))
-
+    print("Shape of intrinsic: ", k.shape)
     camera_to_car_transform = camera0.get_unreal_transform()
     # camera_to_car_transform = camera0.get_transform()
     return settings, k, camera_to_car_transform
@@ -201,7 +165,7 @@ class CarlaGame(object):
         self._map_view = self._map.get_map(WINDOW_HEIGHT) if self._city_name is not None else None
         self._position = None
         self._agent_positions = None
-
+        self.captured_frame_no = 0
         self._measurements = None
         self._extrinsic = None
 
@@ -256,7 +220,6 @@ class CarlaGame(object):
         )
         # Compute the final transformation matrix.
         self._extrinsic = world_transform * self._camera_to_car_transform
-
         self._measurements = measurements
         self._main_image = sensor_data.get('CameraRGB', None)
         self._lidar_measurement = sensor_data.get('Lidar32', None)
@@ -371,9 +334,10 @@ class CarlaGame(object):
             for agent in self._measurements.non_player_agents:
                 if is_class_agent(agent):
                     array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array)
-                    rotation_y = self.get_relative_rotation_y(agent) % math.pi
-                    kitti_datapoint.set_rotation_y(rotation_y)
-                    all_datapoints.append(kitti_datapoint)
+                    if kitti_datapoint:
+                        rotation_y = self.get_relative_rotation_y(agent) % math.pi
+                        kitti_datapoint.set_rotation_y(rotation_y)
+                        all_datapoints.append(kitti_datapoint)
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
         else:
@@ -425,14 +389,17 @@ class CarlaGame(object):
             self._display.blit(surface, (WINDOW_WIDTH, 0))
         # Save screen, lidar and kitti training labels
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
-            if save_data_now:
-                lidar_fname = os.path.join(OUTPUT_FOLDER, 'lidar_{}.ply'.format(self._timer.step))
-                kitti_fname = os.path.join(OUTPUT_FOLDER, '{}.txt'.format(self._timer.step))
-                img_fname = os.path.join(OUTPUT_FOLDER, '{}.png'.format(self._timer.step))
+            
+            if save_data_now and GEN_DATA:
+                lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.ply'.format(self.captured_frame_no))
+                kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
+                img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
+                calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
                 save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
                 save_kitti_data(kitti_fname, all_datapoints)
                 save_lidar_data(lidar_fname, self._lidar_measurement)
-                
+                save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
+                self.captured_frame_no += 1
             else:
                 print("Warning: Could not save training data - lidar or image data may be None")
 
@@ -470,6 +437,40 @@ def save_kitti_data(filename, datapoints):
         out_str = "\n".join([str(point) for point in datapoints if point])
         f.write(out_str)
     print("Wrote kitti data to ", filename)
+
+def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
+    """ Saves the calibration matrices to a file.
+        AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
+        The resulting file will contain: 
+        3x4    p0-p3      Camera P matrix. Contains extrinsic
+                          and intrinsic parameters. (P=K*[R;t])
+        3x3    r0_rect    Rectification matrix, required to transform points
+                          from velodyne to camera coordinate frame.
+        3x4    tr_velodyne_to_cam    Used to transform from velodyne to cam
+                                     coordinate frame according to:
+                                     Point_Camera = P_cam * R0_rect *
+                                                    Tr_velo_to_cam *
+                                                    Point_Velodyne.
+    """
+    extrinsic = extrinsic_mat.matrix[0:3, :]
+    #print(extrinsic)
+    P0 = intrinsic_mat * extrinsic
+    P0 = np.ravel(P0)
+    R0 = np.identity(3) # NOTE! This assumes that the camera and lidar occupy the same position on the car!!
+    TR_velodyne = np.identity(3)
+    TR_velodyne[:, -1] = np.array([0, 0, 1])
+    Tr_imu_to_velo = np.identity(3)
+    def write_flat(f, name, arr):
+        f.write("{}: {}\n".format(name, ' '.join(map(str, arr.flatten('C').squeeze()))))
+
+    # All matrices are written on a line with spacing
+    with open(filename, 'w') as f:
+        for i in range(4): # Avod expects all 4 P-matrices even though we only use the first
+            write_flat(f, "P" + str(i), P0)
+        write_flat(f, "R0_rect", R0)
+        write_flat(f, "Tr_velo_to_cam", TR_velodyne)
+        write_flat(f, "Tr_imu_to_velo", Tr_imu_to_velo)
+
 def create_training_data(array, agent_list):
     # https://davidstutz.de/kittis-3d-object-detection-benchmark/
     """ The 3D bounding boxes KITTI expects are in 2 co-ordinates. The size ( height, weight, and length) are in the object co-ordinate , 
@@ -569,13 +570,15 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
     midpoint_camera_proj = draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
     datapoint.set_3b_object_location(midpoint_camera_proj)
     # NOTE! This means that all vertices of the object has to be visible (not occluded)
-    if None not in vertices_pos2d:
+    if vertices_pos2d.count(None) < 4: # At least 4 vertices has to be visible in order to draw bbox
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
         print("Projected 2d bounding box: ", bbox_2d)
         datapoint.set_bbox(bbox_2d)
-    datapoint.set_3d_object_dimensions(ext)
-    draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
-    return array, datapoint
+        datapoint.set_3d_object_dimensions(ext)
+        draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
+        return array, datapoint
+    else:
+        return array, None
 
 
 
