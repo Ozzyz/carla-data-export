@@ -36,6 +36,7 @@ def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_
 
 def proj_to_camera(pos_vector, extrinsic_mat):
     # transform the points to camera
+    #print("Multiplied {} matrix with {} vector".format(extrinsic_mat.shape, pos_vector.shape))
     transformed_3d_pos = np.dot(inv(extrinsic_mat), pos_vector)
     return transformed_3d_pos
 

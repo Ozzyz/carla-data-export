@@ -65,19 +65,20 @@ from carla.tcp import TCPConnectionError
 from carla.util import print_over_same_line
 from carla.transform import Transform
 from utils import KittiDescriptor, Timer
+from lidar_utils import *
 from camera_utils import *
 import cv2
 
 
-WINDOW_WIDTH = 1920
-WINDOW_HEIGHT = 1080
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
 MINI_WINDOW_WIDTH = 320
 MINI_WINDOW_HEIGHT = 180
 
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 
-STEPS_BETWEEN_RECORDINGS = 20 # How many frames to wait between each capture of screen, bounding boxes and lidar
+STEPS_BETWEEN_RECORDINGS = 100 # How many frames to wait between each capture of screen, bounding boxes and lidar
 OUTPUT_FOLDER = "_out"
 
 GEN_DATA = False
@@ -345,6 +346,14 @@ class CarlaGame(object):
             save_data_now = False
 
         if self._lidar_measurement is not None:
+            if self._main_image is not None:
+                array = image_converter.to_rgb_array(self._main_image)
+                array = array.copy()
+                lidar_world_pos = np.add(vector3d_to_list(self._measurements.player_measurements.transform.location), [0, 0.0, 1.8])
+                array = project_point_cloud(array, self._lidar_measurement.data, lidar_world_pos , self._extrinsic.matrix, self._intrinsic)
+                surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+                self._display.blit(surface, (0, 0))
+            #print("Shape of lidar data: ", self._lidar_measurement.data.shape)
             lidar_data = np.array(self._lidar_measurement.data[:, :2])
             lidar_data *= 2.0
             lidar_data += 100.0
@@ -414,6 +423,8 @@ class CarlaGame(object):
             rot_car = self._measurements.player_measurements.transform.rotation.yaw
             return degrees_to_radians(rot_agent - rot_car)
 
+def vector3d_to_list(vec3d):
+    return [vec3d.x, vec3d.y, vec3d.z]
 
 def is_class_agent(agent):
     """ Returns true if the agent is of the classes that we want to detect """
@@ -548,6 +559,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         # Camera coordinates
         transformed_3d_pos = proj_to_camera(pos_vector, extrinsic_mat)
         # 2d pixel coordinates
+        #print("Transformed camera coordinates : ", transformed_3d_pos)
         pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
         # draw the points on screen
         #print(transformed_3d_pos)
