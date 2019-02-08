@@ -70,8 +70,8 @@ from camera_utils import *
 import cv2
 
 
-WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
+WINDOW_WIDTH = 1248
+WINDOW_HEIGHT = 384
 MINI_WINDOW_WIDTH = 320
 MINI_WINDOW_HEIGHT = 180
 
@@ -81,7 +81,7 @@ WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 STEPS_BETWEEN_RECORDINGS = 100 # How many frames to wait between each capture of screen, bounding boxes and lidar
 OUTPUT_FOLDER = "_out"
 
-GEN_DATA = False
+GEN_DATA = True
 
 folders = ['calib', 'image_2', 'label_2', 'velodyne']
 for folder in folders:
@@ -108,7 +108,7 @@ def make_carla_settings(args):
         SynchronousMode=False,
         SendNonPlayerAgentsInfo=True,
         NumberOfVehicles=10,
-        NumberOfPedestrians=1,
+        NumberOfPedestrians=20,
         WeatherId=random.choice([1, 3, 7, 8, 14]),
         QualityLevel=args.quality_level)
     settings.randomize_seeds()
@@ -136,11 +136,16 @@ def make_carla_settings(args):
     settings.add_sensor(lidar)
 
     # (Intrinsic) K Matrix
+    # | f 0 Cu
+    # | 0 f Cv
+    # | 0 0 1
+    # (Cu, Cv) is center of image
     k = np.identity(3)
     k[0, 2] = WINDOW_WIDTH_HALF
     k[1, 2] = WINDOW_HEIGHT_HALF
-    k[0, 0] = k[1, 1] = WINDOW_WIDTH / \
+    f = WINDOW_WIDTH / \
         (2.0 * math.tan(90.0 * math.pi / 360.0))
+    k[0, 0] = k[1, 1] = f
     print("Shape of intrinsic: ", k.shape)
     camera_to_car_transform = camera0.get_unreal_transform()
     # camera_to_car_transform = camera0.get_transform()
@@ -346,13 +351,13 @@ class CarlaGame(object):
             save_data_now = False
 
         if self._lidar_measurement is not None:
-            if self._main_image is not None:
-                array = image_converter.to_rgb_array(self._main_image)
-                array = array.copy()
-                lidar_world_pos = np.add(vector3d_to_list(self._measurements.player_measurements.transform.location), [0, 0.0, 1.8])
-                array = project_point_cloud(array, self._lidar_measurement.data, lidar_world_pos , self._extrinsic.matrix, self._intrinsic)
-                surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
-                self._display.blit(surface, (0, 0))
+            #if self._main_image is not None:
+                #array = image_converter.to_rgb_array(self._main_image)
+                #array = array.copy()
+                #lidar_world_pos = np.add(vector3d_to_list(self._measurements.player_measurements.transform.location), [0, 0.0, 1.8])
+                #array = project_point_cloud(array, self._lidar_measurement.data, lidar_world_pos , self._extrinsic.matrix, self._intrinsic)
+                #surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+                #self._display.blit(surface, (0, 0))
             #print("Shape of lidar data: ", self._lidar_measurement.data.shape)
             lidar_data = np.array(self._lidar_measurement.data[:, :2])
             lidar_data *= 2.0
@@ -399,11 +404,12 @@ class CarlaGame(object):
         # Save screen, lidar and kitti training labels
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
             
-            if save_data_now and GEN_DATA:
+            if save_data_now and GEN_DATA and all_datapoints:
                 lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.ply'.format(self.captured_frame_no))
                 kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
                 img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
                 calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
+                save_ref_files(OUTPUT_FOLDER, "{0:06}".format(self.captured_frame_no))
                 save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
                 save_kitti_data(kitti_fname, all_datapoints)
                 save_lidar_data(lidar_fname, self._lidar_measurement)
@@ -422,6 +428,14 @@ class CarlaGame(object):
             rot_agent = agent.vehicle.transform.rotation.yaw
             rot_car = self._measurements.player_measurements.transform.rotation.yaw
             return degrees_to_radians(rot_agent - rot_car)
+
+def save_ref_files(OUTPUT_FOLDER, id):
+    """ Appends the id of the given record to the files """
+    for name in ['train.txt', 'val.txt', 'trainval.txt']:
+        path = os.path.join(OUTPUT_FOLDER, name)
+        with open(path, 'a') as f:
+            f.write(id + '\n')
+
 
 def vector3d_to_list(vec3d):
     return [vec3d.x, vec3d.y, vec3d.z]
@@ -463,16 +477,22 @@ def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
                                                     Tr_velo_to_cam *
                                                     Point_Velodyne.
     """
-    extrinsic = extrinsic_mat.matrix[0:3, :]
-    #print(extrinsic)
-    P0 = intrinsic_mat * extrinsic
-    P0 = np.ravel(P0)
+    #extrinsic = np.array(extrinsic_mat.matrix[0:3, :])
+    #print("Shape of extrinsic (R): ", extrinsic.shape)
+    #print("Shape of intrinsic (K): ", intrinsic_mat.shape)
+    #P0 = np.matmul(intrinsic_mat, extrinsic)
+    ravel_mode = 'C'
+    P0 = intrinsic_mat
+    print("Shape of P0: ", P0.shape)
+    P0 = np.column_stack((P0, np.array([0, 0, 0])))
+    print("Shape of P0: ", P0.shape)
+    P0 = np.ravel(P0, order=ravel_mode)
     R0 = np.identity(3) # NOTE! This assumes that the camera and lidar occupy the same position on the car!!
     TR_velodyne = np.identity(3)
-    TR_velodyne[:, -1] = np.array([0, 0, 1])
+    TR_velodyne= np.column_stack((TR_velodyne, np.array([0, 0, 1])))
     Tr_imu_to_velo = np.identity(3)
     def write_flat(f, name, arr):
-        f.write("{}: {}\n".format(name, ' '.join(map(str, arr.flatten('C').squeeze()))))
+        f.write("{}: {}\n".format(name, ' '.join(map(str, arr.flatten(ravel_mode).squeeze()))))
 
     # All matrices are written on a line with spacing
     with open(filename, 'w') as f:
@@ -580,13 +600,14 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
 
     
     midpoint_camera_proj = draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
-    datapoint.set_3b_object_location(midpoint_camera_proj)
+    
     # NOTE! This means that all vertices of the object has to be visible (not occluded)
-    if vertices_pos2d.count(None) < 4: # At least 4 vertices has to be visible in order to draw bbox
+    if vertices_pos2d.count(None) < 8: # At least 4 vertices has to be visible in order to draw bbox
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
         print("Projected 2d bounding box: ", bbox_2d)
         datapoint.set_bbox(bbox_2d)
         datapoint.set_3d_object_dimensions(ext)
+        datapoint.set_3b_object_location(midpoint_camera_proj)
         draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
         return array, datapoint
     else:

@@ -34,6 +34,7 @@ class KittiDescriptor:
         self.dimensions = None
         self.location = None
         self.rotation_y = None
+        self.extent = None
         self._valid_classes = ['Car', 'Van', 'Truck',
                      'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram',
                      'Misc', 'DontCare']
@@ -63,13 +64,25 @@ class KittiDescriptor:
 
     def set_3d_object_dimensions(self, bbox_extent):
         # Bbox extent consists of x,y and z. 
-        # TODO: Multiply these by 2 to get full bbox extend instead of half-box
-        self.dimensions = "{} {} {}".format(bbox_extent.x, bbox_extent.y, bbox_extent.z)
+        # The bbox extent is by Carla set as 
+        # x: length of vehicle (driving direction)
+        # y: to the right of the vehicle
+        # z: up (direction of car roof)
+        # However, Kitti expects height, width and length (z, y, x):
+        height, width, length = bbox_extent.z, bbox_extent.x, bbox_extent.y
+        # Since Carla gives us bbox extent, which is a half-box, multiply all by two
+        self.extent = (height, width, length)
+        self.dimensions = "{} {} {}".format(2*height, 2*width, 2*length)
 
     def set_3b_object_location(self, obj_location):
         # x and y should be inverted since kitti expects positive x and y to be right and up, respectively
         # Object location is four values (x, y, z, w). We only care about three of them (xyz)
         xyz = [float(x) for x in obj_location][0:3]
+        assert None not in [self.extent, self.type], "Extent and type must be set before location!"
+        if self.type == "Pedestrian": 
+            # Since the midpoint/location of the pedestrian is in the middle of the agent, while for car it is at the bottom
+            # we need to subtract the bbox extent in the height direction when adding location of pedestrian.
+            xyz[1] -= self.extent[0]
         xyz[0] *= -1
         xyz[1] *= -1
         self.location = " ".join(map(str, xyz))

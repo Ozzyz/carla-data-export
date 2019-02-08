@@ -15,6 +15,7 @@ def project_point_cloud(array, point_cloud, sensor_world_pos, extrinsic_mat, int
     # World vectors have x,y,z,1
     world_vecs = np.zeros(shape=(dim+1, num_samples))
     for i in range(0, num_samples, draw_each_nth):
+        # TODO: Find out if this is legal, since they may not have same coordinate system directions
         # Since the points are relative to sensors, add the sensor world position to get world coordinates
         vec = point_cloud[i, :]
         world_3d_vec = vec + np.array(sensor_world_pos)

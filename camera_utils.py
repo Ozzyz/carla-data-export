@@ -30,7 +30,7 @@ def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_
     if pos2d_midpoint[2] > 0: # if the point is in front of the camera
         x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
         y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
-        #draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
+        draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
     return transformed_3d_midpoint
 
 
