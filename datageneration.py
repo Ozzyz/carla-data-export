@@ -664,6 +664,8 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         else:
             num_vertices_outside_camera += 1
 
+    midpoint = midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
+
     if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER and num_vertices_outside_camera < MIN_VISIBLE_VERTICES_FOR_RENDER: # At least N vertices has to be visible in order to draw bbox
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
         area = calc_bbox2d_area(bbox_2d)
@@ -674,7 +676,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         datapoint.set_type(obj_type)
         datapoint.set_bbox(bbox_2d)
         datapoint.set_3d_object_dimensions(ext)
-        datapoint.set_3b_object_location(midpoint_camera_proj)
+        datapoint.set_3b_object_location(midpoint)
         draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
         return array, datapoint
     else:

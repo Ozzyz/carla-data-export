@@ -1,5 +1,6 @@
 import time
 import colorsys
+import math
 
 class Timer(object):
     def __init__(self):
@@ -32,4 +33,3 @@ def vector3d_to_list(vec3d):
 
 def degrees_to_radians(degrees):
     return degrees * math.pi / 180
-    
