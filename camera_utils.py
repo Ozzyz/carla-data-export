@@ -14,7 +14,7 @@ def calc_projected_2d_bbox(vertices_pos2d):
     min_y, max_y = min(y_coords), max(y_coords)
     return [min_x, min_y, max_x, max_y]
 
-def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat):
+def midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat):
     # Calculate the midpoint of the bottom chassis
     # This is used since kitti treats this point as the location of the car
     midpoint_vector = np.array([
@@ -24,12 +24,6 @@ def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_
             [1.0]           #   1.0]]
     ])
     transformed_3d_midpoint = proj_to_camera(midpoint_vector, extrinsic_mat)
-
-    pos2d_midpoint = proj_to_2d(transformed_3d_midpoint, intrinsic_mat)
-    if pos2d_midpoint[2] > 0: # if the point is in front of the camera
-        x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
-        y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
-        #draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
     return transformed_3d_midpoint
 
 

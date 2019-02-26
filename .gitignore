@@ -106,3 +106,5 @@ venv.bak/
 
 # The carla package should be ignored - but it is expected to be in the project
 carla/
+# Default directory for generated data
+_out/
