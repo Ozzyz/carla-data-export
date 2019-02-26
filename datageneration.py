@@ -27,6 +27,7 @@ STARTING in a moment...
 """
 
 import argparse
+import cv2
 import logging
 import random
 import time
@@ -64,12 +65,13 @@ from carla.settings import CarlaSettings
 from carla.tcp import TCPConnectionError
 from carla.util import print_over_same_line
 from carla.transform import Transform
+
+
 from utils import Timer, rand_color, vector3d_to_list, degrees_to_radians
 from datadescriptor import KittiDescriptor
 from lidar_utils import *
 from camera_utils import *
-import cv2
-
+from dataexport import *
 
 """ DATA GENERATION SETTINGS"""
 GEN_DATA = True # Whether or not to save training data
@@ -77,6 +79,9 @@ STEPS_BETWEEN_RECORDINGS = 10 # How many frames to wait between each capture of 
 CLASSES_TO_LABEL = ["Vehicle"] #, "Pedestrian"]
 LIDAR_DATA_FORMAT = "bin" # Lidar can be saved in bin to comply to kitti, or the standard .ply format
 assert LIDAR_DATA_FORMAT in ["bin", "ply"], "Lidar data format must be either bin or ply"
+OCCLUDED_VERTEX_COLOR = (255, 0, 0)
+VISIBLE_VERTEX_COLOR = (0, 255, 0)
+
 
 """ CARLA SETTINGS """
 CAMERA_HEIGHT_POS = 1.8
@@ -423,11 +428,11 @@ class CarlaGame(object):
                 kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
                 img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
                 calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
-                save_groundplanes(groundplane_fname, self._measurements.player_measurements)
+                save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
                 save_ref_files(OUTPUT_FOLDER, "{0:06}".format(self.captured_frame_no))
                 save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
                 save_kitti_data(kitti_fname, all_datapoints)
-                save_lidar_data(lidar_fname, self._lidar_measurement)
+                save_lidar_data(lidar_fname, self._lidar_measurement, LIDAR_DATA_FORMAT)
                 save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
                 self.captured_frame_no += 1
             else:
@@ -464,40 +469,6 @@ def to_depth_array(depth_image, k):
     return depth
     
 
-def save_groundplanes(planes_fname, player_measurements):
-    from math import cos, sin
-    """ Saves the groundplane vector of the current frame. 
-        The format of the ground plane file is first three lines describing the file (number of parameters).
-        The next line is the three parameters of the normal vector, and the last is the height of the normal vector,
-        which is the same as the distance to the camera in meters.
-    """
-    rotation = player_measurements.transform.rotation
-    pitch, roll = rotation.pitch, rotation.roll
-    # Since measurements are in degrees, convert to radians
-    pitch = degrees_to_radians(pitch)
-    roll = degrees_to_radians(roll)
-    # Rotate normal vector (y) wrt. pitch and yaw
-    normal_vector = [cos(pitch)*sin(roll), 
-                     cos(pitch)*cos(roll), 
-                     sin(pitch)
-                    ]
-    normal_vector = map(str, normal_vector)
-    with open(planes_fname, 'w') as f:
-        f.write("# Plane\n")
-        f.write("Width 4\n")
-        f.write("Plane 1\n")
-        f.write("{} {}\n".format(" ".join(normal_vector), LIDAR_HEIGHT_POS))
-    logging.info("Wrote plane data to %s", planes_fname)
-
-
-def save_ref_files(OUTPUT_FOLDER, id):
-    """ Appends the id of the given record to the files """
-    for name in ['train.txt', 'val.txt', 'trainval.txt']:
-        path = os.path.join(OUTPUT_FOLDER, name)
-        with open(path, 'a') as f:
-            f.write(id + '\n')
-        logging.info("Wrote reference files to %s", path)
-
 def should_detect_class(agent):
     """ Returns true if the agent is of the classes that we want to detect.
         Note that Carla has class types in lowercase 
@@ -505,64 +476,6 @@ def should_detect_class(agent):
     return True in [agent.HasField(class_type.lower()) for class_type in CLASSES_TO_LABEL]
 
 
-
-def save_image_data(filename, image):
-    logging.info("Wrote image data to %s", filename)
-    # Convert to correct color format
-    color_fmt = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(filename, color_fmt)
-
-def save_lidar_data(filename, lidar_measurement):
-    """ Saves lidar data to given filename, according to the lidar data format.
-        bin is used for KITTI-data format, while .ply is the regular point cloud format
-    """
-    logging.info("Wrote lidar data to %s", filename)
-    if LIDAR_DATA_FORMAT == "bin":
-        lidar_array = [[point.x, -point.z, -point.y, 1.0] for point in lidar_measurement.point_cloud]  # Hopefully correct format
-        lidar_array = np.array(lidar_array).astype(np.float32)
-        lidar_array.tofile(filename)
-    else:
-        lidar_measurement.point_cloud.save_to_disk(filename)
-
-def save_kitti_data(filename, datapoints):
-    with open(filename, 'w') as f:
-        out_str = "\n".join([str(point) for point in datapoints if point])
-        f.write(out_str)
-    logging.info("Wrote kitti data to %s", filename)
-
-def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
-    """ Saves the calibration matrices to a file.
-        AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
-        The resulting file will contain: 
-        3x4    p0-p3      Camera P matrix. Contains extrinsic
-                          and intrinsic parameters. (P=K*[R;t])
-        3x3    r0_rect    Rectification matrix, required to transform points
-                          from velodyne to camera coordinate frame.
-        3x4    tr_velodyne_to_cam    Used to transform from velodyne to cam
-                                     coordinate frame according to:
-                                     Point_Camera = P_cam * R0_rect *
-                                                    Tr_velo_to_cam *
-                                                    Point_Velodyne.
-    """
-    ravel_mode = 'C'
-    P0 = intrinsic_mat
-    P0 = np.column_stack((P0, np.array([0, 0, 0])))
-    P0 = np.ravel(P0, order=ravel_mode)
-    R0 = np.identity(3) # NOTE! This assumes that the camera and lidar occupy the same position on the car!!
-    TR_velodyne = np.identity(3)
-    TR_velodyne= np.column_stack((TR_velodyne, np.array([0, 0, 1])))
-    Tr_imu_to_velo = np.identity(3)
-    def write_flat(f, name, arr):
-        f.write("{}: {}\n".format(name, ' '.join(map(str, arr.flatten(ravel_mode).squeeze()))))
-
-    # All matrices are written on a line with spacing
-    with open(filename, 'w') as f:
-        for i in range(4): # Avod expects all 4 P-matrices even though we only use the first
-            write_flat(f, "P" + str(i), P0)
-        write_flat(f, "R0_rect", R0)
-        write_flat(f, "Tr_velo_to_cam", TR_velodyne)
-        write_flat(f, "Tr_imu_to_velo", Tr_imu_to_velo)
-    logging.info("Wrote all calibration matrices to %s", filename)
 
 def transforms_from_agent(agent):
     """ Returns the KITTI object type and transforms, locations and extension of the given agent """
@@ -603,7 +516,6 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
     # get the needed transformations
     # remember to explicitly make it Transform() so you can use transform_points()
-    
     obj_type, agent_transform, bbox_transform, ext, location = transforms_from_agent(agent)
     if obj_type is None:
         logging.warning("Could not get bounding box for agent. Valid classes : %s", CLASSES_TO_LABEL)
@@ -649,17 +561,16 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
         
         vertex_depth = pos2d[2] # The actual rendered depth (may be wall or other object instead of vertex)
-        x_2d = WINDOW_WIDTH - pos2d[0]
-        y_2d = WINDOW_HEIGHT - pos2d[1]
-
+        x_2d, y_2d  = WINDOW_WIDTH - pos2d[0],  WINDOW_HEIGHT - pos2d[1]
         vertices_pos2d.append((y_2d, x_2d))
+
         if MAX_RENDER_DEPTH_IN_METERS > vertex_depth > 0 and point_in_canvas((y_2d, x_2d)): # if the point is in front of the camera but not too far away
             is_occluded = point_is_occluded((y_2d, x_2d), vertex_depth, depth_map)
             if is_occluded:
-                vertex_color = (255, 0, 0)
+                vertex_color = OCCLUDED_VERTEX_COLOR
             else:
                 num_visible_vertices += 1
-                vertex_color = (0, 255, 0)
+                vertex_color = VISIBLE_VERTEX_COLOR
             draw_rect(array, (y_2d, x_2d), 4, vertex_color)
         else:
             num_vertices_outside_camera += 1
@@ -681,8 +592,6 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         return array, datapoint
     else:
         return array, None
-
-
 
 
 
