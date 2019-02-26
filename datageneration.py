@@ -28,6 +28,7 @@ STARTING in a moment...
 
 import argparse
 import logging
+logging.basicConfig(level=logging.INFO)
 import random
 import time
 import math
@@ -87,7 +88,7 @@ CLASSES_TO_LABEL = ["Vehicle"] #, "Pedestrian"]
 CAMERA_HEIGHT_POS = 1.8
 MIN_BBOX_AREA_IN_PX = 100
 LIDAR_HEIGHT_POS = CAMERA_HEIGHT_POS
-MAX_RENDER_DEPTH = 100 # Meters 
+
 
 
 """ RENDERING SETTINGS """
@@ -98,7 +99,9 @@ MINI_WINDOW_HEIGHT = 180
 
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
-MIN_VISIBLE_VERTICES_FOR_RENDER = 2
+
+MAX_RENDER_DEPTH = 70 # Meters 
+MIN_VISIBLE_VERTICES_FOR_RENDER = 4
 
 """ OUTPUT FOLDER GENERATION """
 PHASE = "training"
@@ -147,8 +150,8 @@ def make_carla_settings(args):
     lidar.set_rotation(0, 0, 0)
     lidar.set(
         Channels=40,
-        Range=50,
-        PointsPerSecond=100000,
+        Range=MAX_RENDER_DEPTH,
+        PointsPerSecond=720000,
         RotationFrequency=20,
         UpperFovLimit=7,
         LowerFovLimit=-16)    
@@ -376,7 +379,7 @@ class CarlaGame(object):
             self._display.blit(surface, (0, 0))
         else:
             save_data_now = False
-
+        """
         if self._lidar_measurement is not None:
             #if self._main_image is not None:
                 #array = image_converter.to_rgb_array(self._main_image)
@@ -401,7 +404,7 @@ class CarlaGame(object):
         else:
             print("Lidar data is None!")
             save_data_now = False
-
+        """
         if self._map_view is not None:
             array = self._map_view
             array = array[:, :, :3]
@@ -433,7 +436,7 @@ class CarlaGame(object):
             if save_data_now and GEN_DATA and all_datapoints:
                 print("Attempting to save at timer step {}, frame no: {}".format(self._timer.step, self.captured_frame_no))
                 groundplane_fname = os.path.join(OUTPUT_FOLDER, 'planes/{0:06}.txt'.format(self.captured_frame_no))
-                lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.ply'.format(self.captured_frame_no))
+                lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin'.format(self.captured_frame_no))
                 kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
                 img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
                 calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
@@ -471,27 +474,14 @@ def to_depth_array(depth_image, k):
     # RGB image will have shape (WINDOW_HEIGHT, WINDOW_WIDTH, 3)
     array = image_converter.to_bgra_array(depth_image)
     array = array.astype(np.float32)
+    print("Min and max of array: ", array.min(), array.max())
     # Apply (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1).
     normalized_depth = np.dot(array[:, :, :3], [65536.0, 256.0, 1.0])
     normalized_depth /= 16777215.0  # (256.0 * 256.0 * 256.0 - 1.0)
     depth = normalized_depth * far_distance_in_meters
-    #print("Max depth, min depth: ", normalized_depth.max(), normalized_depth.min())
-    # 2d pixel coordinates
-    pixel_length = WINDOW_WIDTH * WINDOW_HEIGHT
-    u_coord = repmat(np.r_[WINDOW_WIDTH-1:-1:-1],
-                     WINDOW_HEIGHT, 1).reshape(pixel_length)
-    v_coord = repmat(np.c_[WINDOW_HEIGHT-1:-1:-1],
-                     1, WINDOW_WIDTH).reshape(pixel_length)
+    print("Min and max of depth: ", depth.min(), depth.max())
+    return depth
     
-    depth = np.reshape(depth, pixel_length)
-
-    # pd2 = [u,v,1]
-    p2d = np.array([u_coord, v_coord, np.ones_like(u_coord)])
-
-    # P = [X,Y,Z]
-    p3d = np.dot(np.linalg.inv(k), p2d)
-    p3d *= depth
-    return p3d.reshape(WINDOW_HEIGHT, WINDOW_WIDTH, 3)
     
 
 def save_groundplanes(planes_fname, player_measurements):
@@ -548,7 +538,10 @@ def save_image_data(filename, image):
 
 def save_lidar_data(filename, lidar_measurement):
     print("Wrote lidar data to ", filename)
-    lidar_measurement.point_cloud.save_to_disk(filename)
+    lidar_array = [[point.x, -point.z, -point.y, 1.0] for point in lidar_measurement.point_cloud]  # Hopefully correct format
+    lidar_array = np.array(lidar_array).astype(np.float32)
+    lidar_array.tofile(filename)
+    #lidar_measurement.point_cloud.save_to_disk(filename)
 
 def save_kitti_data(filename, datapoints):
     with open(filename, 'w') as f:
@@ -658,7 +651,8 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
     # Additionally, you can print these vertices to check that is working
     # Store each vertex 2d points for drawing bounding boxes later
     vertices_pos2d = []
-    occlusion_list = []
+    num_visible_vertices = 0
+    num_vertices_outside_camera = 0
     for vertex in bbox:
         # World coordinates
         pos_vector = np.array([
@@ -678,16 +672,20 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
         vertices_pos2d.append((y_2d, x_2d))
         if MAX_RENDER_DEPTH > vertex_depth > 0 and point_in_canvas((y_2d, x_2d)): # if the point is in front of the camera but not too far away
             #print("Car distance, Vertex Depth: {}/{}".format(car_distance, vertex_depth))
-            occlusion_list.append(point_is_occluded((y_2d, x_2d), vertex_depth, depth_map))
-            draw_rect(array, (y_2d, x_2d), 4, rand_color(agent.id))
+            is_occluded = point_is_occluded((y_2d, x_2d), vertex_depth, depth_map)
+            if is_occluded:
+                draw_rect(array, (y_2d, x_2d), 4, (255, 0, 0))
+            else:
+                num_visible_vertices += 1
+                draw_rect(array, (y_2d, x_2d), 4, (0, 255, 0))
         else:
-            occlusion_list.append(False)
+            num_vertices_outside_camera += 1
 
     
     midpoint_camera_proj = draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
     
     # NOTE! This means that all vertices of the object has to be visible (not occluded)
-    if occlusion_list.count(False) <= MIN_VISIBLE_VERTICES_FOR_RENDER: # At least N vertices has to be visible in order to draw bbox
+    if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER and num_vertices_outside_camera < MIN_VISIBLE_VERTICES_FOR_RENDER: # At least N vertices has to be visible in order to draw bbox
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
         area = calc_bbox2d_area(bbox_2d)
         if area < MIN_BBOX_AREA_IN_PX:
@@ -714,10 +712,13 @@ def point_is_occluded(point, vertex_depth, depth_map):
     for dy, dx in neigbours:
         if point_in_canvas((dy+y, dx+x)):
             # If the depth map says the pixel is closer to the camera than the actual vertex
-            if depth_map[y+dy, x+dx, -1] < vertex_depth:
-                is_occlued.append(True)
+            if depth_map[y+dy, x+dx] < vertex_depth:
+                is_occluded.append(True)
+            else:
+                is_occluded.append(False)
+            print(depth_map[y+dy, x+dx],vertex_depth)
     # Only say point is occluded if all four neighbours are closer to camera than vertex 
-    return False not in is_occluded
+    return all(is_occluded)
 
 
 def calc_bbox2d_area(bbox_2d):

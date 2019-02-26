@@ -102,3 +102,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+
+# The carla package should be ignored - but it is expected to be in the project
+carla/
