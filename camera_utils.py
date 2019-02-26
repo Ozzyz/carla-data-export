@@ -4,13 +4,12 @@ from datageneration import WINDOW_HEIGHT, WINDOW_WIDTH
 
 def calc_projected_2d_bbox(vertices_pos2d):
     """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
-        Returns left, top, right, bottom pixel coordinates for the 2d bounding box as a list of four values.
+        Returns left top, right bottom pixel coordinates for the 2d bounding box as a list of four values.
+        Note that vertices_pos2d contains a list of (y_pos2d, x_pos2d) tuples, or None
     """
     
     legal_pos2d = list(filter(lambda x: x is not None, vertices_pos2d))
-    
-    x_coords, y_coords = [int(x[0][0]) for x in legal_pos2d], [int(x[1][0]) for x in legal_pos2d]
-    print(x_coords)
+    y_coords, x_coords = [int(x[0][0]) for x in legal_pos2d], [int(x[1][0]) for x in legal_pos2d]
     min_x, max_x = min(x_coords), max(x_coords)
     min_y, max_y = min(y_coords), max(y_coords)
     return [min_x, min_y, max_x, max_y]
@@ -30,7 +29,7 @@ def draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_
     if pos2d_midpoint[2] > 0: # if the point is in front of the camera
         x_2d = WINDOW_WIDTH - pos2d_midpoint[0]
         y_2d = WINDOW_HEIGHT - pos2d_midpoint[1]
-        draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
+        #draw_rect(array, (y_2d, x_2d), 10, (255, 255, 0))
     return transformed_3d_midpoint
 
 

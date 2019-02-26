@@ -70,6 +70,27 @@ from camera_utils import *
 import cv2
 
 
+"""
+TODO:
+Remove vehicles that are totaly encapsulated in another bbox
+Remove vehicles behind walls
+
+"""
+
+
+""" DATA GENERATION SETTINGS"""
+GEN_DATA = True # Whether or not to save training data
+STEPS_BETWEEN_RECORDINGS = 10 # How many frames to wait between each capture of screen, bounding boxes and lidar
+CLASSES_TO_LABEL = ["Vehicle"] #, "Pedestrian"]
+
+""" CARLA SETTINGS """
+CAMERA_HEIGHT_POS = 1.8
+MIN_BBOX_AREA_IN_PX = 100
+LIDAR_HEIGHT_POS = CAMERA_HEIGHT_POS
+MAX_RENDER_DEPTH = 100 # Meters 
+
+
+""" RENDERING SETTINGS """
 WINDOW_WIDTH = 1248
 WINDOW_HEIGHT = 384
 MINI_WINDOW_WIDTH = 320
@@ -77,22 +98,25 @@ MINI_WINDOW_HEIGHT = 180
 
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
+MIN_VISIBLE_VERTICES_FOR_RENDER = 2
 
-STEPS_BETWEEN_RECORDINGS = 100 # How many frames to wait between each capture of screen, bounding boxes and lidar
-OUTPUT_FOLDER = "_out"
+""" OUTPUT FOLDER GENERATION """
+PHASE = "training"
+OUTPUT_FOLDER = os.path.join("_out", PHASE)
+folders = ['calib', 'image_2', 'label_2', 'velodyne', 'planes']
 
-GEN_DATA = True
-
-folders = ['calib', 'image_2', 'label_2', 'velodyne']
-for folder in folders:
-    directory = os.path.join(OUTPUT_FOLDER, folder)
+def maybe_create_dir(path):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
+for folder in folders:
+    directory = os.path.join(OUTPUT_FOLDER, folder)
+    maybe_create_dir(directory)
 
-MAX_RENDER_DEPTH = 100 # Meters 
-# np.set_printoptions(precision=2, suppress=True)
+
 np.set_printoptions(suppress=True)
+
+
 
 
 def rand_color(seed):
@@ -107,34 +131,35 @@ def make_carla_settings(args):
     settings.set(
         SynchronousMode=False,
         SendNonPlayerAgentsInfo=True,
-        NumberOfVehicles=10,
-        NumberOfPedestrians=20,
+        NumberOfVehicles=20,
+        NumberOfPedestrians=10,
         WeatherId=random.choice([1, 3, 7, 8, 14]),
         QualityLevel=args.quality_level)
     settings.randomize_seeds()
     camera0 = sensor.Camera('CameraRGB')
     camera0.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-    #camera0.set_position(2.0, 0.0, 1.4)
-    #camera0.set_rotation(0.0, 0.0, 0.0)
-    camera0.set_position(0, 0.0, 1.8)
+    camera0.set_position(0, 0.0, CAMERA_HEIGHT_POS)
     camera0.set_rotation(0.0, 0.0, 0.0)
     settings.add_sensor(camera0)
 
     lidar = sensor.Lidar('Lidar32')
-    #lidar.set_position(0, 0, 2.5)
-    #lidar.set_rotation(0, 0, 0)
-    lidar.set_position(0, 0.0, 1.8)
+    lidar.set_position(0, 0.0, LIDAR_HEIGHT_POS)
     lidar.set_rotation(0, 0, 0)
-    
     lidar.set(
-        Channels=32,
+        Channels=40,
         Range=50,
         PointsPerSecond=100000,
         RotationFrequency=20,
-        UpperFovLimit=10,
-        LowerFovLimit=-30)
+        UpperFovLimit=7,
+        LowerFovLimit=-16)    
     settings.add_sensor(lidar)
-
+    """ Depth camera for filtering out occluded vehicles """
+    depth_camera = sensor.Camera('DepthCamera', PostProcessing='Depth')
+    depth_camera.set(FOV=90.0)
+    depth_camera.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+    depth_camera.set_position(0, 0, CAMERA_HEIGHT_POS)
+    depth_camera.set_rotation(0, 0, 0)
+    settings.add_sensor(depth_camera)
     # (Intrinsic) K Matrix
     # | f 0 Cu
     # | 0 f Cv
@@ -229,6 +254,7 @@ class CarlaGame(object):
         self._measurements = measurements
         self._main_image = sensor_data.get('CameraRGB', None)
         self._lidar_measurement = sensor_data.get('Lidar32', None)
+        self._depth_image = sensor_data.get('DepthCamera', None)
 
         # Print measurements every second.
         if self._timer.elapsed_seconds_since_lap() > 1.0:
@@ -332,14 +358,16 @@ class CarlaGame(object):
     def _on_render(self):
         all_datapoints = []
         save_data_now = True
-        if self._main_image is not None:
+ 
+        if self._main_image is not None and self._depth_image is not None:
+            depth_map = to_depth_array(self._depth_image, self._intrinsic)
+            print("Shape of lidar depth map:", depth_map.shape)
             array = image_converter.to_rgb_array(self._main_image)
             array = array.copy() # array.setflags(write=1)
             # Stores all datapoints for the current frames
-            
             for agent in self._measurements.non_player_agents:
-                if is_class_agent(agent):
-                    array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array)
+                if should_detect_class(agent):
+                    array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array, depth_map)
                     if kitti_datapoint:
                         rotation_y = self.get_relative_rotation_y(agent) % math.pi
                         kitti_datapoint.set_rotation_y(rotation_y)
@@ -347,7 +375,6 @@ class CarlaGame(object):
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
         else:
-            print("Main image is None!")
             save_data_now = False
 
         if self._lidar_measurement is not None:
@@ -403,12 +430,14 @@ class CarlaGame(object):
             self._display.blit(surface, (WINDOW_WIDTH, 0))
         # Save screen, lidar and kitti training labels
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
-            
             if save_data_now and GEN_DATA and all_datapoints:
+                print("Attempting to save at timer step {}, frame no: {}".format(self._timer.step, self.captured_frame_no))
+                groundplane_fname = os.path.join(OUTPUT_FOLDER, 'planes/{0:06}.txt'.format(self.captured_frame_no))
                 lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.ply'.format(self.captured_frame_no))
                 kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
                 img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
                 calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
+                save_groundplanes(groundplane_fname, self._measurements.player_measurements)
                 save_ref_files(OUTPUT_FOLDER, "{0:06}".format(self.captured_frame_no))
                 save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
                 save_kitti_data(kitti_fname, all_datapoints)
@@ -416,7 +445,7 @@ class CarlaGame(object):
                 save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
                 self.captured_frame_no += 1
             else:
-                print("Warning: Could not save training data - lidar or image data may be None")
+                print("ould not save training data - no visible agents in scene")
 
         pygame.display.flip()
 
@@ -429,6 +458,68 @@ class CarlaGame(object):
             rot_car = self._measurements.player_measurements.transform.rotation.yaw
             return degrees_to_radians(rot_agent - rot_car)
 
+
+def to_depth_array(depth_image, k):
+    """ Converts a raw depth image from Camera depth sensor to an array where each index 
+        is the depth value. 
+        This conversion is needed because the depth camera encodes depth in the RGB-values
+        as d = (R + G*256 + B*256*256)/(256*256*256 - 1) * FAR_DISTANCE
+        K is the intrinsic matrix
+    """
+    from numpy.matlib import repmat
+    far_distance_in_meters = 1000
+    # RGB image will have shape (WINDOW_HEIGHT, WINDOW_WIDTH, 3)
+    array = image_converter.to_bgra_array(depth_image)
+    array = array.astype(np.float32)
+    # Apply (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1).
+    normalized_depth = np.dot(array[:, :, :3], [65536.0, 256.0, 1.0])
+    normalized_depth /= 16777215.0  # (256.0 * 256.0 * 256.0 - 1.0)
+    depth = normalized_depth * far_distance_in_meters
+    #print("Max depth, min depth: ", normalized_depth.max(), normalized_depth.min())
+    # 2d pixel coordinates
+    pixel_length = WINDOW_WIDTH * WINDOW_HEIGHT
+    u_coord = repmat(np.r_[WINDOW_WIDTH-1:-1:-1],
+                     WINDOW_HEIGHT, 1).reshape(pixel_length)
+    v_coord = repmat(np.c_[WINDOW_HEIGHT-1:-1:-1],
+                     1, WINDOW_WIDTH).reshape(pixel_length)
+    
+    depth = np.reshape(depth, pixel_length)
+
+    # pd2 = [u,v,1]
+    p2d = np.array([u_coord, v_coord, np.ones_like(u_coord)])
+
+    # P = [X,Y,Z]
+    p3d = np.dot(np.linalg.inv(k), p2d)
+    p3d *= depth
+    return p3d.reshape(WINDOW_HEIGHT, WINDOW_WIDTH, 3)
+    
+
+def save_groundplanes(planes_fname, player_measurements):
+    from math import cos, sin
+    """ Saves the groundplane vector of the current frame. 
+        The format of the ground plane file is first three lines describing the file (number of parameters).
+        The next line is the three parameters of the normal vector, and the last is the height of the normal vector,
+        which is the same as the distance to the camera in meters.
+    """
+    rotation = player_measurements.transform.rotation
+    pitch, roll = rotation.pitch, rotation.roll
+    # Since measurements are in degrees, convert to radians
+    pitch = degrees_to_radians(pitch)
+    roll = degrees_to_radians(roll)
+    # Rotate normal vector (y) wrt. pitch and yaw
+    normal_vector = [cos(pitch)*sin(roll), 
+                     cos(pitch)*cos(roll), 
+                     sin(pitch)
+                    ]
+    normal_vector = map(str, normal_vector)
+    with open(planes_fname, 'w') as f:
+        f.write("# Plane\n")
+        f.write("Width 4\n")
+        f.write("Plane 1\n")
+        f.write("{} {}\n".format(" ".join(normal_vector), LIDAR_HEIGHT_POS))
+    print("Wrote plane data to ", planes_fname)
+
+
 def save_ref_files(OUTPUT_FOLDER, id):
     """ Appends the id of the given record to the files """
     for name in ['train.txt', 'val.txt', 'trainval.txt']:
@@ -440,9 +531,11 @@ def save_ref_files(OUTPUT_FOLDER, id):
 def vector3d_to_list(vec3d):
     return [vec3d.x, vec3d.y, vec3d.z]
 
-def is_class_agent(agent):
-    """ Returns true if the agent is of the classes that we want to detect """
-    return agent.HasField('vehicle') or agent.HasField('pedestrian')
+def should_detect_class(agent):
+    """ Returns true if the agent is of the classes that we want to detect.
+        Note that Carla has class types in lowercase 
+    """
+    return True in [agent.HasField(class_type.lower()) for class_type in CLASSES_TO_LABEL]
 
 def degrees_to_radians(degrees):
     return degrees * math.pi / 180
@@ -477,15 +570,9 @@ def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
                                                     Tr_velo_to_cam *
                                                     Point_Velodyne.
     """
-    #extrinsic = np.array(extrinsic_mat.matrix[0:3, :])
-    #print("Shape of extrinsic (R): ", extrinsic.shape)
-    #print("Shape of intrinsic (K): ", intrinsic_mat.shape)
-    #P0 = np.matmul(intrinsic_mat, extrinsic)
     ravel_mode = 'C'
     P0 = intrinsic_mat
-    print("Shape of P0: ", P0.shape)
     P0 = np.column_stack((P0, np.array([0, 0, 0])))
-    print("Shape of P0: ", P0.shape)
     P0 = np.ravel(P0, order=ravel_mode)
     R0 = np.identity(3) # NOTE! This assumes that the camera and lidar occupy the same position on the car!!
     TR_velodyne = np.identity(3)
@@ -502,19 +589,9 @@ def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
         write_flat(f, "Tr_velo_to_cam", TR_velodyne)
         write_flat(f, "Tr_imu_to_velo", Tr_imu_to_velo)
 
-def create_training_data(array, agent_list):
-    # https://davidstutz.de/kittis-3d-object-detection-benchmark/
-    """ The 3D bounding boxes KITTI expects are in 2 co-ordinates. The size ( height, weight, and length) are in the object co-ordinate , 
-    and the center on the bounding box is in the camera co-ordinate. """
-    # TODO: Iterate through all agents, find out which ones are in frame, extract information about their bounding boxes
-    # and class, save to kitti format. 
 
-def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
-    """ Creates bounding boxes for a given agent and camera/world calibration matrices.
-        Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
-    # get the needed transformations
-    # remember to explicitly make it Transform() so you can use transform_points()
-    datapoint = KittiDescriptor()
+def transforms_from_agent(agent):
+    """ Returns the KITTI object type and transforms, locations and extension of the given agent """
     if agent.HasField('pedestrian'):
         obj_type = 'Pedestrian'
         agent_transform = Transform(agent.pedestrian.transform)
@@ -528,9 +605,22 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         ext = agent.vehicle.bounding_box.extent
         location = agent.vehicle.transform.location
     else:
-        # Refrain from drawing anything to the array for this agent
-        print("Error - could not get bounding boxes for agent ", agent)
+        return (None, None, None, None, None)
+    return obj_type, agent_transform, bbox_transform, ext, location
+
+
+def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
+    """ Creates bounding boxes for a given agent and camera/world calibration matrices.
+        Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
+    # get the needed transformations
+    # remember to explicitly make it Transform() so you can use transform_points()
+    
+    obj_type, agent_transform, bbox_transform, ext, location = transforms_from_agent(agent)
+    if obj_type is None:
+        logging.warning("Could not get bounding box for agent.")
         return array, []
+    
+    datapoint = KittiDescriptor()
     datapoint.set_type(obj_type)
 
     # https://github.com/carla-simulator/carla/commits/master/Docs/img/vehicle_bounding_box.png 
@@ -568,6 +658,7 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
     # Additionally, you can print these vertices to check that is working
     # Store each vertex 2d points for drawing bounding boxes later
     vertices_pos2d = []
+    occlusion_list = []
     for vertex in bbox:
         # World coordinates
         pos_vector = np.array([
@@ -579,32 +670,29 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         # Camera coordinates
         transformed_3d_pos = proj_to_camera(pos_vector, extrinsic_mat)
         # 2d pixel coordinates
-        #print("Transformed camera coordinates : ", transformed_3d_pos)
         pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
-        # draw the points on screen
-        #print(transformed_3d_pos)
-        #print(pos2d)
-        # TODO: This should check if the vertex is occluded by checking if the depth (pos2d[2]) is smaller than the length to the vertex
-        #print("Shape of transformed 3d pos: ", transformed_3d_pos.shape)
         car_distance = np.sqrt(transformed_3d_pos.T.dot(transformed_3d_pos))
         vertex_depth = pos2d[2] # The actual rendered depth (may be wall or other object instead of vertex)
-        #print("Calr distance: ", car_distance)
-        #print("Vertex depth: ", vertex_depth)
-        if MAX_RENDER_DEPTH > vertex_depth > 0 and math.isclose(car_distance, vertex_depth, rel_tol=0.05): # if the point is in front of the camera 
-            x_2d = WINDOW_WIDTH - pos2d[0]
-            y_2d = WINDOW_HEIGHT - pos2d[1]
-            vertices_pos2d.append((y_2d, x_2d))
+        x_2d = WINDOW_WIDTH - pos2d[0]
+        y_2d = WINDOW_HEIGHT - pos2d[1]
+        vertices_pos2d.append((y_2d, x_2d))
+        if MAX_RENDER_DEPTH > vertex_depth > 0 and point_in_canvas((y_2d, x_2d)): # if the point is in front of the camera but not too far away
+            #print("Car distance, Vertex Depth: {}/{}".format(car_distance, vertex_depth))
+            occlusion_list.append(point_is_occluded((y_2d, x_2d), vertex_depth, depth_map))
             draw_rect(array, (y_2d, x_2d), 4, rand_color(agent.id))
         else:
-            vertices_pos2d.append(None)
+            occlusion_list.append(False)
 
     
     midpoint_camera_proj = draw_midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
     
     # NOTE! This means that all vertices of the object has to be visible (not occluded)
-    if vertices_pos2d.count(None) < 8: # At least 4 vertices has to be visible in order to draw bbox
+    if occlusion_list.count(False) <= MIN_VISIBLE_VERTICES_FOR_RENDER: # At least N vertices has to be visible in order to draw bbox
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
-        print("Projected 2d bounding box: ", bbox_2d)
+        area = calc_bbox2d_area(bbox_2d)
+        if area < MIN_BBOX_AREA_IN_PX:
+            logging.info("Filtered out bbox with too low area {}".format(area))
+            return array, None
         datapoint.set_bbox(bbox_2d)
         datapoint.set_3d_object_dimensions(ext)
         datapoint.set_3b_object_location(midpoint_camera_proj)
@@ -614,8 +702,30 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array):
         return array, None
 
 
+def point_is_occluded(point, vertex_depth, depth_map):
+    """ Checks whether or not the four pixels directly around the given point has less depth than the given vertex depth
+        If True, this means that the point is occluded.
+    """
+    y, x = map(int, point)
+    
+    from itertools import product
+    neigbours = product((1, -1), repeat=2)
+    is_occluded = []
+    for dy, dx in neigbours:
+        if point_in_canvas((dy+y, dx+x)):
+            # If the depth map says the pixel is closer to the camera than the actual vertex
+            if depth_map[y+dy, x+dx, -1] < vertex_depth:
+                is_occlued.append(True)
+    # Only say point is occluded if all four neighbours are closer to camera than vertex 
+    return False not in is_occluded
 
-def main():
+
+def calc_bbox2d_area(bbox_2d):
+    xmin, ymin, xmax, ymax = bbox_2d
+    return (ymax - ymin) * (xmax - xmin)
+
+
+def parse_args():
     argparser = argparse.ArgumentParser(
         description='CARLA Manual Control Client')
     argparser.add_argument(
@@ -655,6 +765,10 @@ def main():
         help='plot the map of the current city (needs to match active map in '
              'server, options: Town01 or Town02)')
     args = argparser.parse_args()
+    return args
+
+def main():
+    args = parse_args()
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
@@ -665,19 +779,16 @@ def main():
 
     while True:
         try:
-
             with make_carla_client(args.host, args.port) as client:
                 game = CarlaGame(client, args)
                 game.execute()
                 break
-
         except TCPConnectionError as error:
             logging.error(error)
             time.sleep(1)
 
 
 if __name__ == '__main__':
-
     try:
         main()
     except KeyboardInterrupt:

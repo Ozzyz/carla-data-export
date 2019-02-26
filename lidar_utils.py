@@ -19,7 +19,6 @@ def project_point_cloud(array, point_cloud, sensor_world_pos, extrinsic_mat, int
         # Since the points are relative to sensors, add the sensor world position to get world coordinates
         vec = point_cloud[i, :]
         world_3d_vec = vec + np.array(sensor_world_pos)
-        #print("World 3d vec: ", world_3d_vec)
         pos_vector = np.array([
             [world_3d_vec[0]],  # [[X,
             [world_3d_vec[1]],  #   Y,
@@ -27,11 +26,9 @@ def project_point_cloud(array, point_cloud, sensor_world_pos, extrinsic_mat, int
             [1.0]           #   1.0]]
         ])
         world_vecs[:, i] = pos_vector.ravel()
-        #print("Transformed lidar pos ", pos_vector)
     
     camera_projected_vecs = proj_to_camera(world_vecs, extrinsic_mat)
     pos2d = np.dot(intrinsic_mat, camera_projected_vecs[:3])
-    #print("Shape of pos2d: ", pos2d.shape)
     for j in range(0, num_samples, draw_each_nth):
         cur_pos2d = pos2d[..., j]
         cur_pos2d = np.array([
