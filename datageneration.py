@@ -682,23 +682,6 @@ def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
 
 
 
-def point_is_occluded(point, vertex_depth, depth_map):
-    """ Checks whether or not the four pixels directly around the given point has less depth than the given vertex depth
-        If True, this means that the point is occluded.
-    """
-    y, x = map(int, point)
-    from itertools import product
-    neigbours = product((1, -1), repeat=2)
-    is_occluded = []
-    for dy, dx in neigbours:
-        if point_in_canvas((dy+y, dx+x)):
-            # If the depth map says the pixel is closer to the camera than the actual vertex
-            if depth_map[y+dy, x+dx] < vertex_depth:
-                is_occluded.append(True)
-            else:
-                is_occluded.append(False)
-    # Only say point is occluded if all four neighbours are closer to camera than vertex 
-    return all(is_occluded)
 
 
 def calc_bbox2d_area(bbox_2d):
