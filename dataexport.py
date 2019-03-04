@@ -31,7 +31,7 @@ def save_groundplanes(planes_fname, player_measurements, lidar_height):
     with open(planes_fname, 'w') as f:
         f.write("# Plane\n")
         f.write("Width 4\n")
-        f.write("Plane 1\n")
+        f.write("Height 1\n")
         f.write("{} {}\n".format(" ".join(normal_vector), lidar_height))
     logging.info("Wrote plane data to %s", planes_fname)
 
@@ -41,8 +41,9 @@ def save_ref_files(OUTPUT_FOLDER, id):
     for name in ['train.txt', 'val.txt', 'trainval.txt']:
         path = os.path.join(OUTPUT_FOLDER, name)
         with open(path, 'a') as f:
-            f.write(id + '\n')
+            f.write(str(id) + '\n')
         logging.info("Wrote reference files to %s", path)
+
 
 def save_image_data(filename, image):
     logging.info("Wrote image data to %s", filename)
@@ -50,14 +51,41 @@ def save_image_data(filename, image):
     color_fmt = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(filename, color_fmt)
 
-def save_lidar_data(filename, lidar_measurement, format="bin"):
+
+def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_HEIGHT, format="bin"):
     """ Saves lidar data to given filename, according to the lidar data format.
         bin is used for KITTI-data format, while .ply is the regular point cloud format
+        In Unreal, the coordinate system of the engine is defined as, which is the same as the lidar points
+        z
+        ^   ^ x
+        |  /
+        | /
+        |/____> y
+        This is a left-handed coordinate system, with x being forward, y to the right and z up 
+        See also https://github.com/carla-simulator/carla/issues/498
+        However, the lidar coordinate system from KITTI is defined as
+              z
+              ^   ^ x
+              |  /
+              | /
+        y<____|/
+        Which is a right handed coordinate sylstem
+        Therefore, we need to flip the y axis of the lidar in order to get the correct lidar format for kitti.
+        
+        This corresponds to the following changes from Carla to Kitti
+            Carla: X   Y   Z
+            KITTI: X  -Y   Z
+        NOTE: We do not flip the coordinate system when saving to .ply.
     """
     logging.info("Wrote lidar data to %s", filename)
+    point_cloud = np.array(lidar_to_car_transform.transform_points(lidar_measurement.data))  # originally returns a matrix
+    
     if format == "bin":
-        lidar_array = [[point.x, -point.z, -point.y, 1.0] for point in lidar_measurement.point_cloud]  # Hopefully correct format
+        lidar_array = [[point[0], -point[1], point[2] - LIDAR_HEIGHT, 1.0] for point in point_cloud]
         lidar_array = np.array(lidar_array).astype(np.float32)
+        print("Lidar min/max of x: ", lidar_array[:, 0].min(), lidar_array[:, 0].max())
+        print("Lidar min/max of y: ", lidar_array[:, 1].min(), lidar_array[:, 0].max())
+        print("Lidar min/max of z: ", lidar_array[:, 2].min(), lidar_array[:, 0].max())
         lidar_array.tofile(filename)
     else:
         lidar_measurement.point_cloud.save_to_disk(filename)
@@ -81,15 +109,23 @@ def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
                                      Point_Camera = P_cam * R0_rect *
                                                     Tr_velo_to_cam *
                                                     Point_Velodyne.
+        3x4    tr_imu_to_velo        Used to transform from imu to velodyne coordinate frame. This is not needed since we do not export
+                                     imu data.
     """
+    # KITTI format demands that we flatten in row-major order
     ravel_mode = 'C'
     P0 = intrinsic_mat
     P0 = np.column_stack((P0, np.array([0, 0, 0])))
     P0 = np.ravel(P0, order=ravel_mode)
-    R0 = np.identity(3) # NOTE! This assumes that the camera and lidar occupy the same position on the car!!
-    TR_velodyne = np.identity(3)
-    TR_velodyne= np.column_stack((TR_velodyne, np.array([0, 0, 1])))
-    Tr_imu_to_velo = np.identity(3)
+    R0 = np.identity(3)
+    TR_velodyne = np.array([[0, -1, 0], 
+                            [0, 0, -1],
+                            [1, 0, 0]])
+    # Add translation vector from velo to camera. This is 0 because the position of camera and lidar is equal in our configuration.
+    TR_velodyne= np.column_stack((TR_velodyne, np.array([0, 0, 0])))
+    TR_imu_to_velo = np.identity(3)
+    TR_imu_to_velo = np.column_stack((TR_imu_to_velo, np.array([0, 0, 0])))
+    
     def write_flat(f, name, arr):
         f.write("{}: {}\n".format(name, ' '.join(map(str, arr.flatten(ravel_mode).squeeze()))))
 
@@ -99,5 +135,5 @@ def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
             write_flat(f, "P" + str(i), P0)
         write_flat(f, "R0_rect", R0)
         write_flat(f, "Tr_velo_to_cam", TR_velodyne)
-        write_flat(f, "Tr_imu_to_velo", Tr_imu_to_velo)
+        write_flat(f, "TR_imu_to_velo", TR_imu_to_velo)
     logging.info("Wrote all calibration matrices to %s", filename)

@@ -2,6 +2,8 @@ import numpy as np
 from numpy.linalg import pinv, inv
 from datageneration import WINDOW_HEIGHT, WINDOW_WIDTH
 
+from carla import image_converter
+
 def calc_projected_2d_bbox(vertices_pos2d):
     """ Takes in all vertices in pixel projection and calculates min and max of all x and y coordinates.
         Returns left top, right bottom pixel coordinates for the 2d bounding box as a list of four values.
@@ -19,9 +21,9 @@ def midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat):
     # This is used since kitti treats this point as the location of the car
     midpoint_vector = np.array([
         [location.x],  # [[X,
-            [location.y],  #   Y,
-            [location.z],  #   Z,
-            [1.0]           #   1.0]]
+        [location.y],  #   Y,
+        [location.z],  #   Z,
+        [1.0]          #   1.0]]
     ])
     transformed_3d_midpoint = proj_to_camera(midpoint_vector, extrinsic_mat)
     return transformed_3d_midpoint
@@ -35,14 +37,14 @@ def proj_to_camera(pos_vector, extrinsic_mat):
 
 def proj_to_2d(camera_pos_vector, intrinsic_mat):
     # transform the points to 2D
-        pos2d = np.dot(intrinsic_mat, camera_pos_vector[:3])
-        # normalize the 2D points
-        pos2d = np.array([
-            pos2d[0] / pos2d[2],
-            pos2d[1] / pos2d[2],
-            pos2d[2]
-        ])
-        return pos2d
+    pos2d = np.dot(intrinsic_mat, camera_pos_vector[:3])
+    # normalize the 2D points
+    pos2d = np.array([
+        pos2d[0] / pos2d[2],
+        pos2d[1] / pos2d[2],
+        pos2d[2]
+    ])
+    return pos2d
 
 def draw_3d_bounding_box(array, vertices_pos2d, vertex_graph):
     """ Draws lines from each vertex to all connected vertices """
@@ -135,3 +137,22 @@ def point_is_occluded(point, vertex_depth, depth_map):
                 is_occluded.append(False)
     # Only say point is occluded if all four neighbours are closer to camera than vertex 
     return all(is_occluded)
+
+def to_depth_array(depth_image, k):
+    """ Converts a raw depth image from Camera depth sensor to an array where each index 
+        is the depth value. 
+        This conversion is needed because the depth camera encodes depth in the RGB-values
+        as d = (R + G*256 + B*256*256)/(256*256*256 - 1) * FAR_DISTANCE
+        K is the intrinsic matrix
+    """
+    from numpy.matlib import repmat
+    far_distance_in_meters = 1000
+    # RGB image will have shape (WINDOW_HEIGHT, WINDOW_WIDTH, 3)
+    array = image_converter.to_bgra_array(depth_image)
+    array = array.astype(np.float32)
+    # Apply (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1).
+    normalized_depth = np.dot(array[:, :, :3], [65536.0, 256.0, 1.0])
+    normalized_depth /= 16777215.0  # (256.0 * 256.0 * 256.0 - 1.0)
+    depth = normalized_depth * far_distance_in_meters
+    return depth
+    

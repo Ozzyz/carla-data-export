@@ -74,17 +74,48 @@ class KittiDescriptor:
         self.dimensions = "{} {} {}".format(2*height, 2*width, 2*length)
 
     def set_3b_object_location(self, obj_location):
-        # x and y should be inverted since kitti expects positive x and y to be right and up, respectively
+        """ TODO: Change this to 
+            Converts the 3D object location from CARLA coordinates and saves them as KITTI coordinates in the object
+            In Unreal, the coordinate system of the engine is defined as, which is the same as the lidar points
+            z
+            ▲   ▲ x
+            |  /
+            | /
+            |/____> y
+            This is a left-handed coordinate system, with x being forward, y to the right and z up 
+            See also https://github.com/carla-simulator/carla/issues/498
+            However, the camera coordinate system for KITTI is defined as
+                ▲ z
+               /
+              /
+             /____> x
+            |
+            |
+            |
+            ▼
+            y 
+            This is a right-handed coordinate system with z being forward, x to the right and y down
+            Therefore, we have to make the following changes from Carla to Kitti
+            Carla: X   Y   Z
+            KITTI:-X  -Y   Z
+        """
         # Object location is four values (x, y, z, w). We only care about three of them (xyz)
-        xyz = [float(x) for x in obj_location][0:3]
+        x, y, z = [float(x) for x in obj_location][0:3]
         assert None not in [self.extent, self.type], "Extent and type must be set before location!"
         if self.type == "Pedestrian": 
             # Since the midpoint/location of the pedestrian is in the middle of the agent, while for car it is at the bottom
             # we need to subtract the bbox extent in the height direction when adding location of pedestrian.
-            xyz[1] -= self.extent[0]
-        xyz[0] *= -1
-        xyz[1] *= -1
-        self.location = " ".join(map(str, xyz))
+            y -= self.extent[0]
+        # Convert from Carla coordinate system to KITTI
+        # This works for AVOD (image)
+        #x *= -1
+        #y *= -1
+        #self.location = " ".join(map(str, [y, -z, x]))
+        self.location = " ".join(map(str, [-x, -y, z]))
+        # This works for SECOND (lidar)
+        #self.location = " ".join(map(str, [z, x, y]))
+        #self.location = " ".join(map(str, [z, x, -y]))
+        
 
     def set_rotation_y(self, rotation_y: float):
         assert -pi <= rotation_y <= pi, "Rotation y must be in range [-pi..pi] - found {}".format(rotation_y) 
@@ -98,3 +129,4 @@ class KittiDescriptor:
             bbox_format = " ".join([str(x) for x in self.bbox])
         
         return "{} {} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, bbox_format, self.dimensions, self.location, self.rotation_y)    
+

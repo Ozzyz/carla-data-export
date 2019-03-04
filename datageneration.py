@@ -34,20 +34,9 @@ import time
 import math
 import colorsys
 import os
+
 try:
     import pygame
-    from pygame.locals import K_DOWN
-    from pygame.locals import K_LEFT
-    from pygame.locals import K_RIGHT
-    from pygame.locals import K_SPACE
-    from pygame.locals import K_UP
-    from pygame.locals import K_a
-    from pygame.locals import K_d
-    from pygame.locals import K_p
-    from pygame.locals import K_q
-    from pygame.locals import K_r
-    from pygame.locals import K_s
-    from pygame.locals import K_w
 except ImportError:
     raise RuntimeError('cannot import pygame, make sure pygame package is installed')
 
@@ -63,8 +52,8 @@ from carla.client import make_carla_client, VehicleControl
 from carla.planner.map import CarlaMap
 from carla.settings import CarlaSettings
 from carla.tcp import TCPConnectionError
-from carla.util import print_over_same_line
-from carla.transform import Transform
+
+from carla.transform import Transform, Scale
 
 
 from utils import Timer, rand_color, vector3d_to_list, degrees_to_radians
@@ -72,6 +61,8 @@ from datadescriptor import KittiDescriptor
 from lidar_utils import *
 from camera_utils import *
 from dataexport import *
+from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
+
 
 """ DATA GENERATION SETTINGS"""
 GEN_DATA = True # Whether or not to save training data
@@ -85,8 +76,9 @@ VISIBLE_VERTEX_COLOR = (0, 255, 0)
 
 """ CARLA SETTINGS """
 CAMERA_HEIGHT_POS = 1.8
-MIN_BBOX_AREA_IN_PX = 100
 LIDAR_HEIGHT_POS = CAMERA_HEIGHT_POS
+MIN_BBOX_AREA_IN_PX = 100
+
 
 """ AGENT SETTINGS """
 NUM_VEHICLES = 20
@@ -116,6 +108,15 @@ def maybe_create_dir(path):
 for folder in folders:
     directory = os.path.join(OUTPUT_FOLDER, folder)
     maybe_create_dir(directory)
+
+""" DATA SAVE PATHS """
+GROUNDPLANE_PATH = os.path.join(OUTPUT_FOLDER, 'planes/{0:06}.txt')
+LIDAR_PATH = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
+LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
+IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
+CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
+REF_FILES_PATH = os.path.join(OUTPUT_FOLDER, "{0:06}") # Creates train.txt, val.txt and trainval.txt (For AVOD model)
+
 
 
 def make_carla_settings(args):
@@ -165,13 +166,14 @@ def make_carla_settings(args):
         (2.0 * math.tan(90.0 * math.pi / 360.0))
     k[0, 0] = k[1, 1] = f
     camera_to_car_transform = camera0.get_unreal_transform()
-    return settings, k, camera_to_car_transform
+    lidar_to_car_transform = lidar.get_unreal_transform()
+    return settings, k, camera_to_car_transform, lidar_to_car_transform
 
 
 class CarlaGame(object):
     def __init__(self, carla_client, args):
         self.client = carla_client
-        self._carla_settings, self._intrinsic, self._camera_to_car_transform = make_carla_settings(args)
+        self._carla_settings, self._intrinsic, self._camera_to_car_transform, self._lidar_to_car_transform = make_carla_settings(args)
         self._timer = None
         self._display = None
         self._main_image = None
@@ -261,12 +263,12 @@ class CarlaGame(object):
                     measurements.player_measurements.transform.location.y,
                     measurements.player_measurements.transform.location.z])
 
-                self._print_player_measurements_map(
+                MeasurementsDisplayHelper.print_player_measurements_map(
                     measurements.player_measurements,
                     map_position,
-                    lane_orientation)
+                    lane_orientation, self._timer)
             else:
-                self._print_player_measurements(measurements.player_measurements)
+                MeasurementsDisplayHelper.print_player_measurements(measurements.player_measurements, self._timer)
 
             # Plot position on the map as well.
             self._timer.lap()
@@ -292,59 +294,8 @@ class CarlaGame(object):
         Return a VehicleControl message based on the pressed keys. Return None
         if a new episode was requested.
         """
-        if keys[K_r]:
-            return None
-        control = VehicleControl()
-        if keys[K_LEFT] or keys[K_a]:
-            control.steer = -1.0
-        if keys[K_RIGHT] or keys[K_d]:
-            control.steer = 1.0
-        if keys[K_UP] or keys[K_w]:
-            control.throttle = 1.0
-        if keys[K_DOWN] or keys[K_s]:
-            control.brake = 1.0
-        if keys[K_SPACE]:
-            control.hand_brake = True
-        if keys[K_q]:
-            self._is_on_reverse = not self._is_on_reverse
-        if keys[K_p]:
-            self._enable_autopilot = not self._enable_autopilot
-        control.reverse = self._is_on_reverse
-        return control
-
-    def _print_player_measurements_map(
-            self,
-            player_measurements,
-            map_position,
-            lane_orientation):
-        message = 'Step {step} ({fps:.1f} FPS): '
-        message += 'Map Position ({map_x:.1f},{map_y:.1f}) '
-        message += 'Lane Orientation ({ori_x:.1f},{ori_y:.1f}) '
-        message += '{speed:.2f} km/h, '
-        message += '{other_lane:.0f}% other lane, {offroad:.0f}% off-road'
-        message = message.format(
-            map_x=map_position[0],
-            map_y=map_position[1],
-            ori_x=lane_orientation[0],
-            ori_y=lane_orientation[1],
-            step=self._timer.step,
-            fps=self._timer.ticks_per_second(),
-            speed=player_measurements.forward_speed * 3.6,
-            other_lane=100 * player_measurements.intersection_otherlane,
-            offroad=100 * player_measurements.intersection_offroad)
-        print_over_same_line(message)
-
-    def _print_player_measurements(self, player_measurements):
-        message = 'Step {step} ({fps:.1f} FPS): '
-        message += '{speed:.2f} km/h, '
-        message += '{other_lane:.0f}% other lane, {offroad:.0f}% off-road'
-        message = message.format(
-            step=self._timer.step,
-            fps=self._timer.ticks_per_second(),
-            speed=player_measurements.forward_speed * 3.6,
-            other_lane=100 * player_measurements.intersection_otherlane,
-            offroad=100 * player_measurements.intersection_offroad)
-        print_over_same_line(message)
+        control, self._is_on_reverse, self._enable_autopilot = KeyboardHelper.get_keyboard_control(keys, self._is_on_reverse, self._enable_autopilot)
+        return control    
 
     def _on_render(self):
         all_datapoints = []
@@ -359,40 +310,14 @@ class CarlaGame(object):
                 if should_detect_class(agent):
                     array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array, depth_map)
                     if kitti_datapoint:
-                        rotation_y = self.get_relative_rotation_y(agent) % math.pi
+                        rotation_y = get_relative_rotation_y(agent, self._measurements.player_measurements) % math.pi
                         kitti_datapoint.set_rotation_y(rotation_y)
                         all_datapoints.append(kitti_datapoint)
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
         else:
             save_data_now = False
-        """
-        if self._lidar_measurement is not None:
-            #if self._main_image is not None:
-                #array = image_converter.to_rgb_array(self._main_image)
-                #array = array.copy()
-                #lidar_world_pos = np.add(vector3d_to_list(self._measurements.player_measurements.transform.location), [0, 0.0, 1.8])
-                #array = project_point_cloud(array, self._lidar_measurement.data, lidar_world_pos , self._extrinsic.matrix, self._intrinsic)
-                #surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
-                #self._display.blit(surface, (0, 0))
-            #logging.info("Shape of lidar data: ", self._lidar_measurement.data.shape)
-            lidar_data = np.array(self._lidar_measurement.data[:, :2])
-            lidar_data *= 2.0
-            lidar_data += 100.0
-            lidar_data = np.fabs(lidar_data)
-            lidar_data = lidar_data.astype(np.int32)
-            lidar_data = np.reshape(lidar_data, (-1, 2))
-            #draw lidar
-            lidar_img_size = (200, 200, 3)
-            lidar_img = np.zeros(lidar_img_size)
-            print(lidar_data.shape)
-            lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
-            surface = pygame.surfarray.make_surface(lidar_img)
-            self._display.blit(surface, (10, 10))
-        else:
-            logging.info("Lidar data is None!")
-            save_data_now = False
-        """
+        
         if self._map_view is not None:
             array = self._map_view
             array = array[:, :, :3]
@@ -406,33 +331,33 @@ class CarlaGame(object):
             h_pos = int(self._position[1] * (new_window_width/float(self._map_shape[1])))
 
             pygame.draw.circle(surface, [255, 0, 0, 255], (w_pos, h_pos), 6, 0)
+
             for agent in self._agent_positions:
                 if agent.HasField('vehicle'):
                     agent_position = self._map.convert_to_pixel([
                         agent.vehicle.transform.location.x,
                         agent.vehicle.transform.location.y,
                         agent.vehicle.transform.location.z])
-
                     w_pos = int(agent_position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
                     h_pos = int(agent_position[1] *(new_window_width/float(self._map_shape[1])))
-
                     pygame.draw.circle(surface, [255, 0, 255, 255], (w_pos, h_pos), 4, 0)
-
             self._display.blit(surface, (WINDOW_WIDTH, 0))
+
         # Save screen, lidar and kitti training labels
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
             if save_data_now and GEN_DATA and all_datapoints:
                 logging.info("Attempting to save at timer step {}, frame no: {}".format(self._timer.step, self.captured_frame_no))
-                groundplane_fname = os.path.join(OUTPUT_FOLDER, 'planes/{0:06}.txt'.format(self.captured_frame_no))
-                lidar_fname = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin'.format(self.captured_frame_no))
-                kitti_fname = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt'.format(self.captured_frame_no))
-                img_fname = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png'.format(self.captured_frame_no))
-                calib_filename =  os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt'.format(self.captured_frame_no))
+                groundplane_fname = GROUNDPLANE_PATH.format(self.captured_frame_no)
+                lidar_fname = LIDAR_PATH.format(self.captured_frame_no)
+                kitti_fname = LABEL_PATH.format(self.captured_frame_no)
+                img_fname = IMAGE_PATH.format(self.captured_frame_no)
+                calib_filename = CALIBRATION_PATH.format(self.captured_frame_no)
+
                 save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
-                save_ref_files(OUTPUT_FOLDER, "{0:06}".format(self.captured_frame_no))
+                save_ref_files(OUTPUT_FOLDER, self.captured_frame_no)
                 save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
                 save_kitti_data(kitti_fname, all_datapoints)
-                save_lidar_data(lidar_fname, self._lidar_measurement, LIDAR_DATA_FORMAT)
+                save_lidar_data(lidar_fname, self._lidar_measurement, self._lidar_to_car_transform, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
                 save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
                 self.captured_frame_no += 1
             else:
@@ -440,34 +365,15 @@ class CarlaGame(object):
 
         pygame.display.flip()
 
-    def get_relative_rotation_y(self, agent):
-        """ Returns the relative rotation of the agent to the camera in yaw
-        The relative rotation is the difference between the camera rotation (on car) and the agent rotation"""
-        # We only car about the rotation for the classes we do detection on
-        if agent.vehicle.transform:
-            rot_agent = agent.vehicle.transform.rotation.yaw
-            rot_car = self._measurements.player_measurements.transform.rotation.yaw
-            return degrees_to_radians(rot_agent - rot_car)
+def get_relative_rotation_y(agent, player_measurements):
+    """ Returns the relative rotation of the agent to the camera in yaw
+    The relative rotation is the difference between the camera rotation (on car) and the agent rotation"""
+    # We only car about the rotation for the classes we do detection on
+    if agent.vehicle.transform:
+        rot_agent = agent.vehicle.transform.rotation.yaw
+        rot_car = player_measurements.transform.rotation.yaw
+        return degrees_to_radians(rot_agent - rot_car)
 
-
-def to_depth_array(depth_image, k):
-    """ Converts a raw depth image from Camera depth sensor to an array where each index 
-        is the depth value. 
-        This conversion is needed because the depth camera encodes depth in the RGB-values
-        as d = (R + G*256 + B*256*256)/(256*256*256 - 1) * FAR_DISTANCE
-        K is the intrinsic matrix
-    """
-    from numpy.matlib import repmat
-    far_distance_in_meters = 1000
-    # RGB image will have shape (WINDOW_HEIGHT, WINDOW_WIDTH, 3)
-    array = image_converter.to_bgra_array(depth_image)
-    array = array.astype(np.float32)
-    # Apply (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1).
-    normalized_depth = np.dot(array[:, :, :3], [65536.0, 256.0, 1.0])
-    normalized_depth /= 16777215.0  # (256.0 * 256.0 * 256.0 - 1.0)
-    depth = normalized_depth * far_distance_in_meters
-    return depth
-    
 
 def should_detect_class(agent):
     """ Returns true if the agent is of the classes that we want to detect.
