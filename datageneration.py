@@ -217,7 +217,7 @@ class CarlaGame(object):
             array = array.copy()
             # Stores all datapoints for the current frames
             for agent in self._measurements.non_player_agents:
-                if should_detect_class(agent):
+                if should_detect_class(agent) and GEN_DATA:
                     array, kitti_datapoint = create_kitti_datapoint(agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements)
                     if kitti_datapoint:
                         datapoints.append(kitti_datapoint)
@@ -228,12 +228,11 @@ class CarlaGame(object):
             self._display_agents(self._map_view)
            
         # Save screen, lidar and kitti training labels together with calibration and groundplane files
-        if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
-            if GEN_DATA and datapoints:
-                self._save_training_files(datapoints)
-                self.captured_frame_no += 1
-            else:
-                logging.info("Could not save training data - no visible agents of selected classes in scene")
+        if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0 and datapoints:
+            self._save_training_files(datapoints)
+            self.captured_frame_no += 1
+        else:
+            logging.info("Could not save training data - no visible agents of selected classes in scene")
 
         pygame.display.flip()
 
