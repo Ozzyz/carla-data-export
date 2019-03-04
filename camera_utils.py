@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.linalg import pinv, inv
-from datageneration import WINDOW_HEIGHT, WINDOW_WIDTH
+from constants import WINDOW_HEIGHT, WINDOW_WIDTH
 
 from carla import image_converter
 
@@ -46,8 +46,19 @@ def proj_to_2d(camera_pos_vector, intrinsic_mat):
     ])
     return pos2d
 
-def draw_3d_bounding_box(array, vertices_pos2d, vertex_graph):
+def draw_3d_bounding_box(array, vertices_pos2d):
+
     """ Draws lines from each vertex to all connected vertices """
+    # Shows which verticies that are connected so that we can draw lines between them
+    # The key of the dictionary is the index in the bbox array, and the corresponding value is a list of indices 
+    # referring to the same array.
+    vertex_graph = {0: [1, 2, 4], 
+                    1: [0, 3, 5],
+                    2: [0, 3, 6], 
+                    3: [1, 2, 7], 
+                    4: [0, 5, 6], 
+                    5: [1, 4, 7], 
+                    6: [2,4,7]}
     # Note that this can be sped up by not drawing duplicate lines
     for vertex_idx in vertex_graph:
         neighbour_idxs = vertex_graph[vertex_idx]

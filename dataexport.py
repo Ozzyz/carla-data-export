@@ -41,7 +41,7 @@ def save_ref_files(OUTPUT_FOLDER, id):
     for name in ['train.txt', 'val.txt', 'trainval.txt']:
         path = os.path.join(OUTPUT_FOLDER, name)
         with open(path, 'a') as f:
-            f.write(str(id) + '\n')
+            f.write("{0:06}".format(id) + '\n')
         logging.info("Wrote reference files to %s", path)
 
 

@@ -58,43 +58,14 @@ from carla.transform import Transform, Scale
 
 from utils import Timer, rand_color, vector3d_to_list, degrees_to_radians
 from datadescriptor import KittiDescriptor
-from lidar_utils import *
-from camera_utils import *
+#from lidar_utils import *
+#from camera_utils import *
 from dataexport import *
+from bounding_box import create_kitti_datapoint
 from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
+from constants import *
 
 
-""" DATA GENERATION SETTINGS"""
-GEN_DATA = True # Whether or not to save training data
-STEPS_BETWEEN_RECORDINGS = 10 # How many frames to wait between each capture of screen, bounding boxes and lidar
-CLASSES_TO_LABEL = ["Vehicle"] #, "Pedestrian"]
-LIDAR_DATA_FORMAT = "bin" # Lidar can be saved in bin to comply to kitti, or the standard .ply format
-assert LIDAR_DATA_FORMAT in ["bin", "ply"], "Lidar data format must be either bin or ply"
-OCCLUDED_VERTEX_COLOR = (255, 0, 0)
-VISIBLE_VERTEX_COLOR = (0, 255, 0)
-
-
-""" CARLA SETTINGS """
-CAMERA_HEIGHT_POS = 1.8
-LIDAR_HEIGHT_POS = CAMERA_HEIGHT_POS
-MIN_BBOX_AREA_IN_PX = 100
-
-
-""" AGENT SETTINGS """
-NUM_VEHICLES = 20
-NUM_PEDESTRIANS = 10
-
-""" RENDERING SETTINGS """
-WINDOW_WIDTH = 1248
-WINDOW_HEIGHT = 384
-MINI_WINDOW_WIDTH = 320
-MINI_WINDOW_HEIGHT = 180
-
-WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
-WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
-
-MAX_RENDER_DEPTH_IN_METERS = 70 # Meters 
-MIN_VISIBLE_VERTICES_FOR_RENDER = 4
 
 """ OUTPUT FOLDER GENERATION """
 PHASE = "training"
@@ -115,7 +86,6 @@ LIDAR_PATH = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
 LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
-REF_FILES_PATH = os.path.join(OUTPUT_FOLDER, "{0:06}") # Creates train.txt, val.txt and trainval.txt (For AVOD model)
 
 
 
@@ -294,24 +264,24 @@ class CarlaGame(object):
         Return a VehicleControl message based on the pressed keys. Return None
         if a new episode was requested.
         """
-        control, self._is_on_reverse, self._enable_autopilot = KeyboardHelper.get_keyboard_control(keys, self._is_on_reverse, self._enable_autopilot)
-        return control    
+        control = KeyboardHelper.get_keyboard_control(keys, self._is_on_reverse, self._enable_autopilot)
+        if control is not None:
+            control, self._is_on_reverse, self._enable_autopilot = control
+        return control
+
 
     def _on_render(self):
         all_datapoints = []
         save_data_now = True
  
         if self._main_image is not None and self._depth_image is not None:
-            depth_map = to_depth_array(self._depth_image, self._intrinsic)
             array = image_converter.to_rgb_array(self._main_image)
             array = array.copy() # array.setflags(write=1)
             # Stores all datapoints for the current frames
             for agent in self._measurements.non_player_agents:
                 if should_detect_class(agent):
-                    array, kitti_datapoint = bbox_from_agent(agent, self._intrinsic, self._extrinsic.matrix, array, depth_map)
+                    array, kitti_datapoint = create_kitti_datapoint(agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements)
                     if kitti_datapoint:
-                        rotation_y = get_relative_rotation_y(agent, self._measurements.player_measurements) % math.pi
-                        kitti_datapoint.set_rotation_y(rotation_y)
                         all_datapoints.append(kitti_datapoint)
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
@@ -365,14 +335,9 @@ class CarlaGame(object):
 
         pygame.display.flip()
 
-def get_relative_rotation_y(agent, player_measurements):
-    """ Returns the relative rotation of the agent to the camera in yaw
-    The relative rotation is the difference between the camera rotation (on car) and the agent rotation"""
-    # We only car about the rotation for the classes we do detection on
-    if agent.vehicle.transform:
-        rot_agent = agent.vehicle.transform.rotation.yaw
-        rot_car = player_measurements.transform.rotation.yaw
-        return degrees_to_radians(rot_agent - rot_car)
+
+
+
 
 
 def should_detect_class(agent):
@@ -383,130 +348,8 @@ def should_detect_class(agent):
 
 
 
-def transforms_from_agent(agent):
-    """ Returns the KITTI object type and transforms, locations and extension of the given agent """
-    if agent.HasField('pedestrian'):
-        obj_type = 'Pedestrian'
-        agent_transform = Transform(agent.pedestrian.transform)
-        bbox_transform = Transform(agent.pedestrian.bounding_box.transform)
-        ext = agent.pedestrian.bounding_box.extent
-        location = agent.pedestrian.transform.location
-    elif agent.HasField('vehicle'):
-        obj_type = 'Car'
-        agent_transform = Transform(agent.vehicle.transform)
-        bbox_transform = Transform(agent.vehicle.bounding_box.transform)
-        ext = agent.vehicle.bounding_box.extent
-        location = agent.vehicle.transform.location
-    else:
-        return (None, None, None, None, None)
-    return obj_type, agent_transform, bbox_transform, ext, location
-
-def vertices_from_extension(ext):
-    """ Extraxts the 8 bounding box vertices relative to (0,0,0)
-    https://github.com/carla-simulator/carla/commits/master/Docs/img/vehicle_bounding_box.png 
-    8 bounding box vertices relative to (0,0,0)
-    """
-    return np.array([
-        [  ext.x,   ext.y,   ext.z], # Top left front
-        [- ext.x,   ext.y,   ext.z], # Top left back
-        [  ext.x, - ext.y,   ext.z], # Top right front
-        [- ext.x, - ext.y,   ext.z], # Top right back
-        [  ext.x,   ext.y, - ext.z], # Bottom left front
-        [- ext.x,   ext.y, - ext.z], # Bottom left back
-        [  ext.x, - ext.y, - ext.z], # Bottom right front
-        [- ext.x, - ext.y, - ext.z]  # Bottom right back
-    ])
-
-def bbox_from_agent(agent, intrinsic_mat, extrinsic_mat, array, depth_map):
-    """ Creates bounding boxes for a given agent and camera/world calibration matrices.
-        Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
-    # get the needed transformations
-    # remember to explicitly make it Transform() so you can use transform_points()
-    obj_type, agent_transform, bbox_transform, ext, location = transforms_from_agent(agent)
-    if obj_type is None:
-        logging.warning("Could not get bounding box for agent. Valid classes : %s", CLASSES_TO_LABEL)
-        return array, []
-    
-    bbox = vertices_from_extension(ext)
-    # Shows which verticies that are connected so that we can draw lines between them
-    # The key of the dictionary is the index in the bbox array, and the corresponding value is a list of indices 
-    # referring to the same array.
-    vertex_graph = {0: [1, 2, 4], 
-                    1: [0, 3, 5],
-                    2: [0, 3, 6], 
-                    3: [1, 2, 7], 
-                    4: [0, 5, 6], 
-                    5: [1, 4, 7], 
-                    6: [2,4,7]}
-
-    # transform the vertices respect to the bounding box transform
-    bbox = bbox_transform.transform_points(bbox)
-
-    # the bounding box transform is respect to the agents transform
-    # so let's transform the points relative to it's transform
-    bbox = agent_transform.transform_points(bbox)
-
-    # agents's transform is relative to the world, so now,
-    # bbox contains the 3D bounding box vertices relative to the world
-    # Additionally, you can logging.info these vertices to check that is working
-    # Store each vertex 2d points for drawing bounding boxes later
-    vertices_pos2d = []
-    num_visible_vertices = 0
-    num_vertices_outside_camera = 0
-    for vertex in bbox:
-        # World coordinates
-        pos_vector = np.array([
-            [vertex[0,0]],  # [[X,
-            [vertex[0,1]],  #   Y,
-            [vertex[0,2]],  #   Z,
-            [1.0]           #   1.0]]
-        ])
-        # Camera coordinates
-        transformed_3d_pos = proj_to_camera(pos_vector, extrinsic_mat)
-        # 2d pixel coordinates
-        pos2d = proj_to_2d(transformed_3d_pos, intrinsic_mat)
-        
-        vertex_depth = pos2d[2] # The actual rendered depth (may be wall or other object instead of vertex)
-        x_2d, y_2d  = WINDOW_WIDTH - pos2d[0],  WINDOW_HEIGHT - pos2d[1]
-        vertices_pos2d.append((y_2d, x_2d))
-
-        if MAX_RENDER_DEPTH_IN_METERS > vertex_depth > 0 and point_in_canvas((y_2d, x_2d)): # if the point is in front of the camera but not too far away
-            is_occluded = point_is_occluded((y_2d, x_2d), vertex_depth, depth_map)
-            if is_occluded:
-                vertex_color = OCCLUDED_VERTEX_COLOR
-            else:
-                num_visible_vertices += 1
-                vertex_color = VISIBLE_VERTEX_COLOR
-            draw_rect(array, (y_2d, x_2d), 4, vertex_color)
-        else:
-            num_vertices_outside_camera += 1
-
-    midpoint = midpoint_from_agent_location(array, location, extrinsic_mat, intrinsic_mat)
-
-    if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER and num_vertices_outside_camera < MIN_VISIBLE_VERTICES_FOR_RENDER: # At least N vertices has to be visible in order to draw bbox
-        bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
-        area = calc_bbox2d_area(bbox_2d)
-        if area < MIN_BBOX_AREA_IN_PX:
-            logging.info("Filtered out bbox with too low area {}".format(area))
-            return array, None
-        datapoint = KittiDescriptor()
-        datapoint.set_type(obj_type)
-        datapoint.set_bbox(bbox_2d)
-        datapoint.set_3d_object_dimensions(ext)
-        datapoint.set_3b_object_location(midpoint)
-        draw_3d_bounding_box(array, vertices_pos2d, vertex_graph)
-        return array, datapoint
-    else:
-        return array, None
 
 
-
-def calc_bbox2d_area(bbox_2d):
-    """ Calculate the area of the given 2d bbox
-    Input is assumed to be xmin, ymin, xmax, ymax tuple 
-    """
-    xmin, ymin, xmax, ymax = bbox_2d
-    return (ymax - ymin) * (xmax - xmin)
 
 
 def parse_args():

@@ -24,16 +24,16 @@ from math import pi
 
 class KittiDescriptor:
     # This class is responsible for storing a single datapoint for the kitti 3d object detection task
-    def __init__(self):
-        self.type = None
+    def __init__(self, type=None, bbox=None, dimensions=None, location=None, rotation_y=None, extent=None):
+        self.type = type
         self.truncated = 0
         self.occluded = 0
         self.alpha = -10
-        self.bbox = None
-        self.dimensions = None
-        self.location = None
-        self.rotation_y = None
-        self.extent = None
+        self.bbox = bbox
+        self.dimensions = dimensions
+        self.location = location
+        self.rotation_y = rotation_y
+        self.extent = extent
         self._valid_classes = ['Car', 'Van', 'Truck',
                      'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram',
                      'Misc', 'DontCare']
