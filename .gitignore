@@ -108,3 +108,4 @@ venv.bak/
 carla/
 # Default directory for generated data
 _out/
+*.tar.gz
