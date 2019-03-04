@@ -39,9 +39,9 @@ class KeyboardHelper:
         if keys[K_SPACE]:
             control.hand_brake = True
         if keys[K_q]:
-            is_on_reverse = is_on_reverse
+            is_on_reverse = not is_on_reverse
         if keys[K_p]:
-            enable_autopilot = enable_autopilot
+            enable_autopilot = not enable_autopilot
         control.reverse = is_on_reverse
         return control, is_on_reverse, enable_autopilot
 

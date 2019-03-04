@@ -24,7 +24,7 @@ def save_groundplanes(planes_fname, player_measurements, lidar_height):
     roll = degrees_to_radians(roll)
     # Rotate normal vector (y) wrt. pitch and yaw
     normal_vector = [cos(pitch)*sin(roll), 
-                     cos(pitch)*cos(roll), 
+                    -cos(pitch)*cos(roll), 
                      sin(pitch)
                     ]
     normal_vector = map(str, normal_vector)

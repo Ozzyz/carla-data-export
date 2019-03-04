@@ -47,25 +47,19 @@ except ImportError:
     raise RuntimeError('cannot import numpy, make sure numpy package is installed')
 
 from carla import image_converter
-from carla import sensor
 from carla.client import make_carla_client, VehicleControl
 from carla.planner.map import CarlaMap
-from carla.settings import CarlaSettings
 from carla.tcp import TCPConnectionError
-
 from carla.transform import Transform, Scale
 
 
 from utils import Timer, rand_color, vector3d_to_list, degrees_to_radians
 from datadescriptor import KittiDescriptor
-#from lidar_utils import *
-#from camera_utils import *
 from dataexport import *
 from bounding_box import create_kitti_datapoint
 from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
 from constants import *
-
-
+from settings import make_carla_settings
 
 """ OUTPUT FOLDER GENERATION """
 PHASE = "training"
@@ -86,58 +80,6 @@ LIDAR_PATH = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
 LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
-
-
-
-def make_carla_settings(args):
-    """Make a CarlaSettings object with the settings we need."""
-    settings = CarlaSettings()
-    settings.set(
-        SynchronousMode=False,
-        SendNonPlayerAgentsInfo=True,
-        NumberOfVehicles=NUM_VEHICLES,
-        NumberOfPedestrians=NUM_PEDESTRIANS,
-        WeatherId=random.choice([1, 3, 7, 8, 14]),
-        QualityLevel=args.quality_level)
-    settings.randomize_seeds()
-    camera0 = sensor.Camera('CameraRGB')
-    camera0.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-    camera0.set_position(0, 0.0, CAMERA_HEIGHT_POS)
-    camera0.set_rotation(0.0, 0.0, 0.0)
-    settings.add_sensor(camera0)
-
-    lidar = sensor.Lidar('Lidar32')
-    lidar.set_position(0, 0.0, LIDAR_HEIGHT_POS)
-    lidar.set_rotation(0, 0, 0)
-    lidar.set(
-        Channels=40,
-        Range=MAX_RENDER_DEPTH_IN_METERS,
-        PointsPerSecond=720000,
-        RotationFrequency=20,
-        UpperFovLimit=7,
-        LowerFovLimit=-16)    
-    settings.add_sensor(lidar)
-    """ Depth camera for filtering out occluded vehicles """
-    depth_camera = sensor.Camera('DepthCamera', PostProcessing='Depth')
-    depth_camera.set(FOV=90.0)
-    depth_camera.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-    depth_camera.set_position(0, 0, CAMERA_HEIGHT_POS)
-    depth_camera.set_rotation(0, 0, 0)
-    settings.add_sensor(depth_camera)
-    # (Intrinsic) K Matrix
-    # | f 0 Cu
-    # | 0 f Cv
-    # | 0 0 1
-    # (Cu, Cv) is center of image
-    k = np.identity(3)
-    k[0, 2] = WINDOW_WIDTH_HALF
-    k[1, 2] = WINDOW_HEIGHT_HALF
-    f = WINDOW_WIDTH / \
-        (2.0 * math.tan(90.0 * math.pi / 360.0))
-    k[0, 0] = k[1, 1] = f
-    camera_to_car_transform = camera0.get_unreal_transform()
-    lidar_to_car_transform = lidar.get_unreal_transform()
-    return settings, k, camera_to_car_transform, lidar_to_car_transform
 
 
 class CarlaGame(object):
@@ -203,9 +145,7 @@ class CarlaGame(object):
 
     def _on_loop(self):
         self._timer.tick()
-
         measurements, sensor_data = self.client.read_data()
-
         # (Extrinsic) Rt Matrix
         # (Camera) local 3d to world 3d.
         # Get the transform from the player protobuf transformation.
@@ -271,73 +211,66 @@ class CarlaGame(object):
 
 
     def _on_render(self):
-        all_datapoints = []
-        save_data_now = True
- 
+        datapoints = []
         if self._main_image is not None and self._depth_image is not None:
             array = image_converter.to_rgb_array(self._main_image)
-            array = array.copy() # array.setflags(write=1)
+            array = array.copy()
             # Stores all datapoints for the current frames
             for agent in self._measurements.non_player_agents:
                 if should_detect_class(agent):
                     array, kitti_datapoint = create_kitti_datapoint(agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements)
                     if kitti_datapoint:
-                        all_datapoints.append(kitti_datapoint)
+                        datapoints.append(kitti_datapoint)
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
-        else:
-            save_data_now = False
         
         if self._map_view is not None:
-            array = self._map_view
-            array = array[:, :, :3]
-
-            new_window_width = \
-                (float(WINDOW_HEIGHT) / float(self._map_shape[0])) * \
-                float(self._map_shape[1])
-            surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
-
-            w_pos = int(self._position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
-            h_pos = int(self._position[1] * (new_window_width/float(self._map_shape[1])))
-
-            pygame.draw.circle(surface, [255, 0, 0, 255], (w_pos, h_pos), 6, 0)
-
-            for agent in self._agent_positions:
-                if agent.HasField('vehicle'):
-                    agent_position = self._map.convert_to_pixel([
-                        agent.vehicle.transform.location.x,
-                        agent.vehicle.transform.location.y,
-                        agent.vehicle.transform.location.z])
-                    w_pos = int(agent_position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
-                    h_pos = int(agent_position[1] *(new_window_width/float(self._map_shape[1])))
-                    pygame.draw.circle(surface, [255, 0, 255, 255], (w_pos, h_pos), 4, 0)
-            self._display.blit(surface, (WINDOW_WIDTH, 0))
-
-        # Save screen, lidar and kitti training labels
+            self._display_agents(self._map_view)
+           
+        # Save screen, lidar and kitti training labels together with calibration and groundplane files
         if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
-            if save_data_now and GEN_DATA and all_datapoints:
-                logging.info("Attempting to save at timer step {}, frame no: {}".format(self._timer.step, self.captured_frame_no))
-                groundplane_fname = GROUNDPLANE_PATH.format(self.captured_frame_no)
-                lidar_fname = LIDAR_PATH.format(self.captured_frame_no)
-                kitti_fname = LABEL_PATH.format(self.captured_frame_no)
-                img_fname = IMAGE_PATH.format(self.captured_frame_no)
-                calib_filename = CALIBRATION_PATH.format(self.captured_frame_no)
-
-                save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
-                save_ref_files(OUTPUT_FOLDER, self.captured_frame_no)
-                save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
-                save_kitti_data(kitti_fname, all_datapoints)
-                save_lidar_data(lidar_fname, self._lidar_measurement, self._lidar_to_car_transform, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
-                save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
+            if GEN_DATA and datapoints:
+                self._save_training_files(datapoints)
                 self.captured_frame_no += 1
             else:
-                logging.info("ould not save training data - no visible agents in scene")
+                logging.info("Could not save training data - no visible agents of selected classes in scene")
 
         pygame.display.flip()
 
+    def _save_training_files(self, datapoints):
+        logging.info("Attempting to save at timer step {}, frame no: {}".format(self._timer.step, self.captured_frame_no))
+        groundplane_fname = GROUNDPLANE_PATH.format(self.captured_frame_no)
+        lidar_fname = LIDAR_PATH.format(self.captured_frame_no)
+        kitti_fname = LABEL_PATH.format(self.captured_frame_no)
+        img_fname = IMAGE_PATH.format(self.captured_frame_no)
+        calib_filename = CALIBRATION_PATH.format(self.captured_frame_no)
 
+        save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
+        save_ref_files(OUTPUT_FOLDER, self.captured_frame_no)
+        save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
+        save_kitti_data(kitti_fname, datapoints)
+        save_lidar_data(lidar_fname, self._lidar_measurement, self._lidar_to_car_transform, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
+        save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
 
-
+    def _display_agents(self, map_view):
+        array = array[:, :, :3]
+        new_window_width = \
+            (float(WINDOW_HEIGHT) / float(self._map_shape[0])) * \
+            float(self._map_shape[1])
+        surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+        w_pos = int(self._position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
+        h_pos = int(self._position[1] * (new_window_width/float(self._map_shape[1])))
+        pygame.draw.circle(surface, [255, 0, 0, 255], (w_pos, h_pos), 6, 0)
+        for agent in self._agent_positions:
+            if agent.HasField('vehicle'):
+                agent_position = self._map.convert_to_pixel([
+                    agent.vehicle.transform.location.x,
+                    agent.vehicle.transform.location.y,
+                    agent.vehicle.transform.location.z])
+                w_pos = int(agent_position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
+                h_pos = int(agent_position[1] *(new_window_width/float(self._map_shape[1])))
+                pygame.draw.circle(surface, [255, 0, 255, 255], (w_pos, h_pos), 4, 0)
+        self._display.blit(surface, (WINDOW_WIDTH, 0))
 
 
 def should_detect_class(agent):
@@ -345,11 +278,6 @@ def should_detect_class(agent):
         Note that Carla has class types in lowercase 
     """
     return True in [agent.HasField(class_type.lower()) for class_type in CLASSES_TO_LABEL]
-
-
-
-
-
 
 
 def parse_args():
