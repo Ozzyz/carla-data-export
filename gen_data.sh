@@ -1,1 +1,1 @@
-python datageneration.py --autopilot --verbose
+python datageneration.py --autopilot

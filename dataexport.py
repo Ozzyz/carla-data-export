@@ -11,7 +11,7 @@ from utils import degrees_to_radians
 
 def save_groundplanes(planes_fname, player_measurements, lidar_height):
     from math import cos, sin
-    """ Saves the groundplane vector of the current frame. 
+    """ Saves the groundplane vector of the current frame.
         The format of the ground plane file is first three lines describing the file (number of parameters).
         The next line is the three parameters of the normal vector, and the last is the height of the normal vector,
         which is the same as the distance to the camera in meters.
@@ -60,7 +60,7 @@ def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_H
         |  /
         | /
         |/____> y
-        This is a left-handed coordinate system, with x being forward, y to the right and z up 
+        This is a left-handed coordinate system, with x being forward, y to the right and z up
         See also https://github.com/carla-simulator/carla/issues/498
         However, the lidar coordinate system from KITTI is defined as
               z
@@ -84,12 +84,12 @@ def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_H
         lidar_array = [[point[0], -point[1], point[2] -
                         LIDAR_HEIGHT, 1.0] for point in point_cloud]
         lidar_array = np.array(lidar_array).astype(np.float32)
-        print("Lidar min/max of x: ",
-              lidar_array[:, 0].min(), lidar_array[:, 0].max())
-        print("Lidar min/max of y: ",
-              lidar_array[:, 1].min(), lidar_array[:, 0].max())
-        print("Lidar min/max of z: ",
-              lidar_array[:, 2].min(), lidar_array[:, 0].max())
+        logging.debug("Lidar min/max of x: {} {}".format(
+                      lidar_array[:, 0].min(), lidar_array[:, 0].max()))
+        logging.debug("Lidar min/max of y: {} {}".format(
+                      lidar_array[:, 1].min(), lidar_array[:, 0].max()))
+        logging.debug("Lidar min/max of z: {} {}".format(
+                      lidar_array[:, 2].min(), lidar_array[:, 0].max()))
         lidar_array.tofile(filename)
     else:
         lidar_measurement.point_cloud.save_to_disk(filename)
@@ -105,7 +105,7 @@ def save_kitti_data(filename, datapoints):
 def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
     """ Saves the calibration matrices to a file.
         AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
-        The resulting file will contain: 
+        The resulting file will contain:
         3x4    p0-p3      Camera P matrix. Contains extrinsic
                           and intrinsic parameters. (P=K*[R;t])
         3x3    r0_rect    Rectification matrix, required to transform points

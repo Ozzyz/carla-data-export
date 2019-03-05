@@ -9,7 +9,8 @@ assert LIDAR_DATA_FORMAT in [
     "bin", "ply"], "Lidar data format must be either bin or ply"
 OCCLUDED_VERTEX_COLOR = (255, 0, 0)
 VISIBLE_VERTEX_COLOR = (0, 255, 0)
-
+# How many meters the car must drive before a new capture is triggered.
+DISTANCE_SINCE_LAST_RECORDING = 10
 
 """ CARLA SETTINGS """
 CAMERA_HEIGHT_POS = 1.6

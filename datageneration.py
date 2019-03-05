@@ -54,7 +54,7 @@ from carla.planner.map import CarlaMap
 from carla.tcp import TCPConnectionError
 from carla.transform import Transform, Scale
 
-from utils import Timer, rand_color, vector3d_to_list, degrees_to_radians
+from utils import Timer, rand_color, vector3d_to_array, degrees_to_radians
 from datadescriptor import KittiDescriptor
 from dataexport import *
 from bounding_box import create_kitti_datapoint
@@ -110,6 +110,8 @@ class CarlaGame(object):
         self.captured_frame_no = 0
         self._measurements = None
         self._extrinsic = None
+        # To keep track of how far the car has driven since the last capture of data
+        self._agent_location_on_last_capture = None
 
     def execute(self):
         """Launch the PyGame."""
@@ -162,10 +164,10 @@ class CarlaGame(object):
         # Compute the final transformation matrix.
         self._extrinsic = world_transform * self._camera_to_car_transform
         self._measurements = measurements
+        self._last_player_location = measurements.player_measurements.transform.location
         self._main_image = sensor_data.get('CameraRGB', None)
         self._lidar_measurement = sensor_data.get('Lidar32', None)
         self._depth_image = sensor_data.get('DepthCamera', None)
-
         # Print measurements every second.
         if self._timer.elapsed_seconds_since_lap() > 1.0:
             if self._city_name is not None:
@@ -220,14 +222,24 @@ class CarlaGame(object):
 
     def _on_render(self):
         datapoints = []
+
         if self._main_image is not None and self._depth_image is not None:
-            array, datapoints = self._generate_datapoints()
-            # Save screen, lidar and kitti training labels together with calibration and groundplane files
-            if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0 and datapoints:
-                self._save_training_files(datapoints)
-                self.captured_frame_no += 1
+            array = image_converter.to_rgb_array(self._main_image)
+            array, datapoints = self._generate_datapoints(array)
+            distance_driven = self._distance_since_last_recording()
+            print("Distance driven since last recording: {}".format(distance_driven))
+            has_driven_long_enough = distance_driven is None or distance_driven > DISTANCE_SINCE_LAST_RECORDING
+            if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
+                if has_driven_long_enough:
+                    self._update_agent_location()
+                    # Save screen, lidar and kitti training labels together with calibration and groundplane files
+                    self._save_training_files(datapoints)
+                    self.captured_frame_no += 1
+                else:
+                    logging.info("Could save datapoint, but agent has not driven {} meters since last recording (Currently {} meters)".format(
+                        DISTANCE_SINCE_LAST_RECORDING, distance_driven))
             else:
-                logging.info(
+                logging.debug(
                     "Could not save training data - no visible agents of selected classes in scene")
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
@@ -235,10 +247,22 @@ class CarlaGame(object):
             self._display_agents(self._map_view)
         pygame.display.flip()
 
-    def _generate_datapoints(self):
+    def _distance_since_last_recording(self):
+        if self._agent_location_on_last_capture is None:
+            return None
+        cur_pos = vector3d_to_array(
+            self._measurements.player_measurements.transform.location)
+        last_pos = vector3d_to_array(self._agent_location_on_last_capture)
+        def dist_func(x, y): return sum((x - y)**2)
+
+        return dist_func(cur_pos, last_pos)
+
+    def _update_agent_location(self):
+        self._agent_location_on_last_capture = self._measurements.player_measurements.transform.location
+
+    def _generate_datapoints(self, array):
         """ Returns a list of datapoints (labels and such) that are generated this frame together with the main image array """
         datapoints = []
-        array = image_converter.to_rgb_array(self._main_image)
         array = array.copy()
         # Stores all datapoints for the current frames
         for agent in self._measurements.non_player_agents:
@@ -271,8 +295,7 @@ class CarlaGame(object):
 
     def _display_agents(self, map_view):
         array = array[:, :, :3]
-        new_window_width = \
-            (float(WINDOW_HEIGHT) / float(self._map_shape[0])) * \
+        new_window_width = (float(WINDOW_HEIGHT) / float(self._map_shape[0])) * \
             float(self._map_shape[1])
         surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
         w_pos = int(
