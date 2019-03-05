@@ -11,6 +11,11 @@ OCCLUDED_VERTEX_COLOR = (255, 0, 0)
 VISIBLE_VERTEX_COLOR = (0, 255, 0)
 # How many meters the car must drive before a new capture is triggered.
 DISTANCE_SINCE_LAST_RECORDING = 10
+# How many datapoints to record before resetting the scene.
+NUM_RECORDINGS_BEFORE_RESET = 20
+# How many frames to render before resetting the environment
+# For example, the agent may be stuck
+NUM_EMPTY_FRAMES_BEFORE_RESET = 40
 
 """ CARLA SETTINGS """
 CAMERA_HEIGHT_POS = 1.6

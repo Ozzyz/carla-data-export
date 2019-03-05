@@ -107,11 +107,33 @@ class CarlaGame(object):
             WINDOW_HEIGHT) if self._city_name is not None else None
         self._position = None
         self._agent_positions = None
-        self.captured_frame_no = 0
+        self.captured_frame_no = self.current_captured_frame_num()
         self._measurements = None
         self._extrinsic = None
         # To keep track of how far the car has driven since the last capture of data
         self._agent_location_on_last_capture = None
+        self._frames_since_last_capture = 0
+
+    def current_captured_frame_num(self):
+        # Figures out which frame number we currently are on
+        # This is run once, when we start the simulator in case we already have a dataset.
+        # The user can then choose to overwrite or append to the dataset.
+        label_path = os.path.join(OUTPUT_FOLDER, 'label_2/')
+        num_existing_data_files = len(
+            [name for name in os.listdir(label_path) if name.endswith('.txt')])
+        print(num_existing_data_files)
+        if num_existing_data_files == 0:
+            return 0
+        answer = input(
+            "There already exists a dataset in {}. Would you like to (O)verwrite or (A)ppend the dataset? (O/A)".format(OUTPUT_FOLDER))
+        if answer.upper() == "O":
+            logging.info(
+                "Resetting frame number to 0 and overwriting existing")
+            # Overwrite the data
+            return 0
+        logging.info("Continuing recording data on frame number {}".format(
+            num_existing_data_files))
+        return num_existing_data_files
 
     def execute(self):
         """Launch the PyGame."""
@@ -151,10 +173,20 @@ class CarlaGame(object):
         self.client.start_episode(player_start)
         self._timer = Timer()
         self._is_on_reverse = False
+        self._agent_location_on_last_capture = None
 
     def _on_loop(self):
         self._timer.tick()
         measurements, sensor_data = self.client.read_data()
+
+        # Reset the environment if the agent is stuck or can't find any agents
+        if self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET:
+            self._on_new_episode()
+        # Reset the environment if we have captured enough frames in this one
+        elif (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET == 0:
+            self._on_new_episode()
+        logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
+                                                 (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
         # (Extrinsic) Rt Matrix
         # (Camera) local 3d to world 3d.
         # Get the transform from the player protobuf transformation.
@@ -229,16 +261,18 @@ class CarlaGame(object):
             distance_driven = self._distance_since_last_recording()
             print("Distance driven since last recording: {}".format(distance_driven))
             has_driven_long_enough = distance_driven is None or distance_driven > DISTANCE_SINCE_LAST_RECORDING
-            if self._timer.step % STEPS_BETWEEN_RECORDINGS == 0:
+            if (self._timer.step + 1) % STEPS_BETWEEN_RECORDINGS == 0:
                 if has_driven_long_enough:
                     self._update_agent_location()
                     # Save screen, lidar and kitti training labels together with calibration and groundplane files
                     self._save_training_files(datapoints)
                     self.captured_frame_no += 1
+                    self._frames_since_last_capture = 0
                 else:
                     logging.info("Could save datapoint, but agent has not driven {} meters since last recording (Currently {} meters)".format(
                         DISTANCE_SINCE_LAST_RECORDING, distance_driven))
             else:
+                self._frames_since_last_capture += 1
                 logging.debug(
                     "Could not save training data - no visible agents of selected classes in scene")
             surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
