@@ -30,9 +30,9 @@ def make_carla_settings(args):
         Channels=40,
         Range=MAX_RENDER_DEPTH_IN_METERS,
         PointsPerSecond=720000,
-        RotationFrequency=5,
+        RotationFrequency=10,
         UpperFovLimit=7,
-        LowerFovLimit=-16)    
+        LowerFovLimit=-16)
     settings.add_sensor(lidar)
     """ Depth camera for filtering out occluded vehicles """
     depth_camera = sensor.Camera('DepthCamera', PostProcessing='Depth')

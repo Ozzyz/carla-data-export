@@ -4,7 +4,8 @@ import numpy as np
 
 from datadescriptor import KittiDescriptor
 from camera_utils import *
-from constants import WINDOW_HEIGHT, WINDOW_WIDTH, MAX_RENDER_DEPTH_IN_METERS, MIN_VISIBLE_VERTICES_FOR_RENDER, VISIBLE_VERTEX_COLOR, OCCLUDED_VERTEX_COLOR, MIN_BBOX_AREA_IN_PX
+from constants import WINDOW_HEIGHT, WINDOW_WIDTH, MAX_RENDER_DEPTH_IN_METERS, MIN_VISIBLE_VERTICES_FOR_RENDER, 
+                      VISIBLE_VERTEX_COLOR, OCCLUDED_VERTEX_COLOR, MIN_BBOX_AREA_IN_PX
 from utils import degrees_to_radians
 
 def bbox_2d_from_agent(agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform):

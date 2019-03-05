@@ -1,9 +1,12 @@
 """ DATA GENERATION SETTINGS"""
-GEN_DATA = True # Whether or not to save training data
-STEPS_BETWEEN_RECORDINGS = 10 # How many frames to wait between each capture of screen, bounding boxes and lidar
-CLASSES_TO_LABEL = ["Vehicle"] #, "Pedestrian"]
-LIDAR_DATA_FORMAT = "bin" # Lidar can be saved in bin to comply to kitti, or the standard .ply format
-assert LIDAR_DATA_FORMAT in ["bin", "ply"], "Lidar data format must be either bin or ply"
+GEN_DATA = True  # Whether or not to save training data
+# How many frames to wait between each capture of screen, bounding boxes and lidar
+STEPS_BETWEEN_RECORDINGS = 10
+CLASSES_TO_LABEL = ["Vehicle"]  # , "Pedestrian"]
+# Lidar can be saved in bin to comply to kitti, or the standard .ply format
+LIDAR_DATA_FORMAT = "bin"
+assert LIDAR_DATA_FORMAT in [
+    "bin", "ply"], "Lidar data format must be either bin or ply"
 OCCLUDED_VERTEX_COLOR = (255, 0, 0)
 VISIBLE_VERTEX_COLOR = (0, 255, 0)
 
@@ -27,5 +30,5 @@ MINI_WINDOW_HEIGHT = 180
 WINDOW_WIDTH_HALF = WINDOW_WIDTH / 2
 WINDOW_HEIGHT_HALF = WINDOW_HEIGHT / 2
 
-MAX_RENDER_DEPTH_IN_METERS = 70 # Meters 
+MAX_RENDER_DEPTH_IN_METERS = 70  # Meters
 MIN_VISIBLE_VERTICES_FOR_RENDER = 4

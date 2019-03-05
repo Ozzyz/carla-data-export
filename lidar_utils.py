@@ -21,12 +21,12 @@ def project_point_cloud(array, point_cloud, sensor_world_pos, extrinsic_mat, int
         world_3d_vec = vec + np.array(sensor_world_pos)
         pos_vector = np.array([
             [world_3d_vec[0]],  # [[X,
-            [world_3d_vec[1]],  #   Y,
-            [world_3d_vec[2]],  #   Z,
-            [1.0]           #   1.0]]
+            [world_3d_vec[1]],  # Y,
+            [world_3d_vec[2]],  # Z,
+            [1.0]  # 1.0]]
         ])
         world_vecs[:, i] = pos_vector.ravel()
-    
+
     camera_projected_vecs = proj_to_camera(world_vecs, extrinsic_mat)
     pos2d = np.dot(intrinsic_mat, camera_projected_vecs[:3])
     for j in range(0, num_samples, draw_each_nth):
@@ -37,10 +37,10 @@ def project_point_cloud(array, point_cloud, sensor_world_pos, extrinsic_mat, int
             cur_pos2d[2]
         ])
         depth = cur_pos2d[2]
-        
+
         if 100 > depth > 0:
             x_2d = WINDOW_WIDTH - cur_pos2d[0]
             y_2d = WINDOW_HEIGHT - cur_pos2d[1]
             draw_rect(array, (y_2d, x_2d), int(10/depth))
-            
+
     return array

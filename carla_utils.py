@@ -20,7 +20,9 @@ try:
     from pygame.locals import K_s
     from pygame.locals import K_w
 except ImportError:
-    raise RuntimeError('cannot import pygame, make sure pygame package is installed')
+    raise RuntimeError(
+        'cannot import pygame, make sure pygame package is installed')
+
 
 class KeyboardHelper:
 
@@ -54,15 +56,15 @@ class MeasurementsDisplayHelper:
         message += '{speed:.2f} km/h, '
         message += '{other_lane:.0f}% other lane, {offroad:.0f}% off-road'
         message = message.format(
-            map_x = map_position[0],
-            map_y = map_position[1],
-            ori_x = lane_orientation[0],
-            ori_y = lane_orientation[1],
-            step =  timer.step,
-            fps =   timer.ticks_per_second(),
-            speed= player_measurements.forward_speed * 3.6,
-            other_lane = 100 * player_measurements.intersection_otherlane,
-            offroad = 100 * player_measurements.intersection_offroad)
+            map_x=map_position[0],
+            map_y=map_position[1],
+            ori_x=lane_orientation[0],
+            ori_y=lane_orientation[1],
+            step=timer.step,
+            fps=timer.ticks_per_second(),
+            speed=player_measurements.forward_speed * 3.6,
+            other_lane=100 * player_measurements.intersection_otherlane,
+            offroad=100 * player_measurements.intersection_offroad)
         print_over_same_line(message)
 
     def print_player_measurements(player_measurements, timer):
