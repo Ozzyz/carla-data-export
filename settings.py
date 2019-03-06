@@ -5,6 +5,8 @@ import random
 import numpy as np
 import math
 
+from carla.transform import Transform, Rotation, Scale
+
 
 def make_carla_settings(args):
     """Make a CarlaSettings object with the settings we need."""
@@ -53,5 +55,5 @@ def make_carla_settings(args):
         (2.0 * math.tan(90.0 * math.pi / 360.0))
     k[0, 0] = k[1, 1] = f
     camera_to_car_transform = camera0.get_unreal_transform()
-    lidar_to_car_transform = lidar.get_unreal_transform()
+    lidar_to_car_transform = lidar.get_transform() * Transform(Rotation(yaw=90), Scale(z=-1))
     return settings, k, camera_to_car_transform, lidar_to_car_transform

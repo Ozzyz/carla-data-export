@@ -62,6 +62,8 @@ from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
 from constants import *
 from settings import make_carla_settings
 
+from math import cos, sin
+
 """ OUTPUT FOLDER GENERATION """
 PHASE = "training"
 OUTPUT_FOLDER = os.path.join("_out", PHASE)
@@ -182,9 +184,11 @@ class CarlaGame(object):
         # Reset the environment if the agent is stuck or can't find any agents
         if self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET:
             self._on_new_episode()
+            return
         # Reset the environment if we have captured enough frames in this one
         elif (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET == 0:
             self._on_new_episode()
+            return
         logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
                                                  (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
         # (Extrinsic) Rt Matrix
@@ -262,7 +266,7 @@ class CarlaGame(object):
             print("Distance driven since last recording: {}".format(distance_driven))
             has_driven_long_enough = distance_driven is None or distance_driven > DISTANCE_SINCE_LAST_RECORDING
             if (self._timer.step + 1) % STEPS_BETWEEN_RECORDINGS == 0:
-                if has_driven_long_enough:
+                if has_driven_long_enough and datapoints:
                     self._update_agent_location()
                     # Save screen, lidar and kitti training labels together with calibration and groundplane files
                     self._save_training_files(datapoints)
@@ -298,11 +302,35 @@ class CarlaGame(object):
         """ Returns a list of datapoints (labels and such) that are generated this frame together with the main image array """
         datapoints = []
         array = array.copy()
+
+        # Calculation to shift bboxes relative to pitch and roll of player
+        rotation = self._measurements.player_measurements.transform.rotation
+        pitch, roll = rotation.pitch, rotation.roll
+        # Since measurements are in degrees, convert to radians
+        pitch = degrees_to_radians(pitch)
+        roll = degrees_to_radians(roll)
+
+        # rotation matrix for pitch
+        rotP = np.array([[np.cos(pitch),  0,          sin(pitch)],
+                       [0,              1,          0],
+                       [-sin(pitch),    0,          cos(pitch)]])
+
+        # rotation matrix for roll
+        rotR = np.array([[1,              0,          0],
+                       [0,              cos(roll),  -sin(roll)],
+                       [0,              sin(roll),  cos(roll)]])
+
+        # combined rotation matrix
+        rotPR = rotP * rotR
+
+        print("Pitch: ", pitch)
+        print("Roll: ", roll)
+
         # Stores all datapoints for the current frames
         for agent in self._measurements.non_player_agents:
             if should_detect_class(agent) and GEN_DATA:
                 array, kitti_datapoint = create_kitti_datapoint(
-                    agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements)
+                    agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements, rotPR)
                 if kitti_datapoint:
                     datapoints.append(kitti_datapoint)
         return array, datapoints

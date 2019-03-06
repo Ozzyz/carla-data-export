@@ -77,6 +77,7 @@ def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_H
         NOTE: We do not flip the coordinate system when saving to .ply.
     """
     logging.info("Wrote lidar data to %s", filename)
+
     point_cloud = np.array(lidar_to_car_transform.transform_points(
         lidar_measurement.data))  # originally returns a matrix
 
