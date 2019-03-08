@@ -9,7 +9,7 @@ from utils import degrees_to_radians
 import logging
 
 
-def bbox_2d_from_agent(agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotPR):  # rotPR expects point to be in Kitti lidar format
+def bbox_2d_from_agent(agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotRP):  # rotRP expects point to be in Kitti lidar format
     """ Creates bounding boxes for a given agent and camera/world calibration matrices.
         Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
     bbox = vertices_from_extension(ext)
@@ -51,32 +51,28 @@ def calculate_occlusion_stats(array, vertices_pos2d, depth_map, draw_vertices=Tr
     return num_visible_vertices, num_vertices_outside_camera
 
 
-def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_image, player_measurements, rotPR, draw_3D_bbox=True):
+def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_image, player_measurements, rotRP, draw_3D_bbox=True):
     """ Calculates the bounding box of the given agent, and returns a KittiDescriptor which describes the object to be labeled """
     obj_type, agent_transform, bbox_transform, ext, location = transforms_from_agent(
         agent)
+
     if obj_type is None:
         logging.warning(
             "Could not get bounding box for agent. Object type is None")
         return array, None
     vertices_pos2d = bbox_2d_from_agent(
-        agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotPR)
+        agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotRP)
 
-    depth_map = to_depth_array(depth_image, intrinsic_mat)
+    depth_map = depth_image.data * 1000
     num_visible_vertices, num_vertices_outside_camera = calculate_occlusion_stats(
-        array, vertices_pos2d, depth_map, draw_vertices=True)
+        array, vertices_pos2d, depth_map, draw_vertices=draw_3D_bbox)
 
     midpoint = midpoint_from_agent_location(
         array, location, extrinsic_mat, intrinsic_mat)
 
     # At least N vertices has to be visible in order to draw bbox
     if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER and num_vertices_outside_camera < MIN_VISIBLE_VERTICES_FOR_RENDER:
-        LtoC = np.array([[0,  -1,  0],
-                         [0, 0,  -1],
-                         [1,  0, 0]])
-        LtoCrot = LtoC * rotPR
-
-        #midpoint[:3] = LtoCrot * midpoint[:3]  # Does not work, all bounding boxes are drawn towards origin
+        midpoint[:3] = rotRP * midpoint[:3]
 
         bbox_2d = calc_projected_2d_bbox(vertices_pos2d)
         area = calc_bbox2d_area(bbox_2d)
@@ -92,7 +88,7 @@ def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_ima
         datapoint.set_bbox(bbox_2d)
         datapoint.set_3d_object_dimensions(ext)
         datapoint.set_type(obj_type)
-        datapoint.set_3b_object_location(midpoint)
+        datapoint.set_3d_object_location(midpoint)
         datapoint.set_rotation_y(rotation_y)
         return array, datapoint
     else:

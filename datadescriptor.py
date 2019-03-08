@@ -76,7 +76,7 @@ class KittiDescriptor:
         self.extent = (height, width, length)
         self.dimensions = "{} {} {}".format(2*height, 2*width, 2*length)
 
-    def set_3b_object_location(self, obj_location):
+    def set_3d_object_location(self, obj_location):
         """ TODO: Change this to 
             Converts the 3D object location from CARLA coordinates and saves them as KITTI coordinates in the object
             In Unreal, the coordinate system of the engine is defined as, which is the same as the lidar points

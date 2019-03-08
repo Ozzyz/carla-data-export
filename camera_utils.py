@@ -152,22 +152,3 @@ def point_is_occluded(point, vertex_depth, depth_map):
                 is_occluded.append(False)
     # Only say point is occluded if all four neighbours are closer to camera than vertex
     return all(is_occluded)
-
-
-def to_depth_array(depth_image, k):
-    """ Converts a raw depth image from Camera depth sensor to an array where each index 
-        is the depth value. 
-        This conversion is needed because the depth camera encodes depth in the RGB-values
-        as d = (R + G*256 + B*256*256)/(256*256*256 - 1) * FAR_DISTANCE
-        K is the intrinsic matrix
-    """
-    from numpy.matlib import repmat
-    far_distance_in_meters = 1000
-    # RGB image will have shape (WINDOW_HEIGHT, WINDOW_WIDTH, 3)
-    array = image_converter.to_bgra_array(depth_image)
-    array = array.astype(np.float32)
-    # Apply (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1).
-    normalized_depth = np.dot(array[:, :, :3], [65536.0, 256.0, 1.0])
-    normalized_depth /= 16777215.0  # (256.0 * 256.0 * 256.0 - 1.0)
-    depth = normalized_depth * far_distance_in_meters
-    return depth

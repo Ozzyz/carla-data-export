@@ -182,13 +182,13 @@ class CarlaGame(object):
         measurements, sensor_data = self.client.read_data()
 
         # Reset the environment if the agent is stuck or can't find any agents
-        if self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET:
-            self._on_new_episode()
-            return
+        #if self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET:
+        #    self._on_new_episode()
+        #    return
         # Reset the environment if we have captured enough frames in this one
-        elif (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET == 0:
-            self._on_new_episode()
-            return
+        #elif (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET == 0:
+        #    self._on_new_episode()
+        #    return
         logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
                                                  (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
         # (Extrinsic) Rt Matrix
@@ -310,18 +310,19 @@ class CarlaGame(object):
         pitch = degrees_to_radians(pitch)
         roll = degrees_to_radians(roll)
 
-        # rotation matrix for pitch
-        rotP = np.array([[np.cos(pitch),  0,          sin(pitch)],
-                       [0,              1,          0],
-                       [-sin(pitch),    0,          cos(pitch)]])
+        # rotation matrix for roll, would be yaw in a traditional coord system
+        rotR = np.array([[cos(roll),    -sin(roll),     0          ],
+                         [sin(roll),    cos(roll),      0          ],
+                         [0,            0,              1          ]])
 
-        # rotation matrix for roll
-        rotR = np.array([[1,              0,          0],
-                       [0,              cos(roll),  -sin(roll)],
-                       [0,              sin(roll),  cos(roll)]])
+        # rotation matrix for pitch, would be roll in a traditional coord system
+        rotP = np.array([[1,            0,              0          ],
+                         [0,            cos(pitch),     -sin(pitch)],
+                         [0,            sin(pitch),     cos(pitch) ]])
 
-        # combined rotation matrix
-        rotPR = rotP * rotR
+        # combined rotation matrix, must be in order roll, pitch, yaw
+        #rotRP = rotR * rotP
+        rotRP = np.identity(3)
 
         print("Pitch: ", pitch)
         print("Roll: ", roll)
@@ -330,7 +331,7 @@ class CarlaGame(object):
         for agent in self._measurements.non_player_agents:
             if should_detect_class(agent) and GEN_DATA:
                 array, kitti_datapoint = create_kitti_datapoint(
-                    agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements, rotPR)
+                    agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements, rotRP)
                 if kitti_datapoint:
                     datapoints.append(kitti_datapoint)
         return array, datapoints
