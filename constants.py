@@ -15,7 +15,7 @@ DISTANCE_SINCE_LAST_RECORDING = 10
 NUM_RECORDINGS_BEFORE_RESET = 20
 # How many frames to render before resetting the environment
 # For example, the agent may be stuck
-NUM_EMPTY_FRAMES_BEFORE_RESET = 40
+NUM_EMPTY_FRAMES_BEFORE_RESET = 100
 
 """ CARLA SETTINGS """
 CAMERA_HEIGHT_POS = 1.6

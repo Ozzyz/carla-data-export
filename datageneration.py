@@ -61,7 +61,7 @@ from bounding_box import create_kitti_datapoint
 from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
 from constants import *
 from settings import make_carla_settings
-
+import time
 from math import cos, sin
 
 """ OUTPUT FOLDER GENERATION """
@@ -115,6 +115,8 @@ class CarlaGame(object):
         # To keep track of how far the car has driven since the last capture of data
         self._agent_location_on_last_capture = None
         self._frames_since_last_capture = 0
+        # How many frames we have captured since reset
+        self._captured_frames_since_restart = 0
 
     def current_captured_frame_num(self):
         # Figures out which frame number we currently are on
@@ -146,8 +148,9 @@ class CarlaGame(object):
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         return
-                self._on_loop()
-                self._on_render()
+                reset = self._on_loop()
+                if not reset:
+                    self._on_render()
         finally:
             pygame.quit()
 
@@ -175,22 +178,29 @@ class CarlaGame(object):
         self.client.start_episode(player_start)
         self._timer = Timer()
         self._is_on_reverse = False
+
+        # Reset all tracking variables
         self._agent_location_on_last_capture = None
+        self._frames_since_last_capture = 0
+        self._captured_frames_since_restart = 0
 
     def _on_loop(self):
         self._timer.tick()
         measurements, sensor_data = self.client.read_data()
-
-        # Reset the environment if the agent is stuck or can't find any agents
-        #if self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET:
-        #    self._on_new_episode()
-        #    return
-        # Reset the environment if we have captured enough frames in this one
-        #elif (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET == 0:
-        #    self._on_new_episode()
-        #    return
         logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
                                                  (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
+        # Reset the environment if the agent is stuck or can't find any agents or if we have captured enough frames in this one
+        is_stuck = self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET
+        is_enough_datapoints = (
+            self._captured_frames_since_restart + 1) % NUM_RECORDINGS_BEFORE_RESET == 0
+
+        if is_stuck or is_enough_datapoints:
+            logging.warning("Is stucK: {}, is_enough_datapoints: {}".format(
+                is_stuck, is_enough_datapoints))
+            self._on_new_episode()
+            # If we dont sleep, the client will continue to render
+            return True
+
         # (Extrinsic) Rt Matrix
         # (Camera) local 3d to world 3d.
         # Get the transform from the player protobuf transformation.
@@ -271,6 +281,7 @@ class CarlaGame(object):
                     # Save screen, lidar and kitti training labels together with calibration and groundplane files
                     self._save_training_files(datapoints)
                     self.captured_frame_no += 1
+                    self._captured_frames_since_restart += 1
                     self._frames_since_last_capture = 0
                 else:
                     logging.info("Could save datapoint, but agent has not driven {} meters since last recording (Currently {} meters)".format(
@@ -311,22 +322,18 @@ class CarlaGame(object):
         roll = degrees_to_radians(roll)
 
         # rotation matrix for roll, would be yaw in a traditional coord system
-        rotR = np.array([[cos(roll),    -sin(roll),     0          ],
-                         [sin(roll),    cos(roll),      0          ],
-                         [0,            0,              1          ]])
+        rotR = np.array([[cos(roll),    -sin(roll),     0],
+                         [sin(roll),    cos(roll),      0],
+                         [0,            0,              1]])
 
         # rotation matrix for pitch, would be roll in a traditional coord system
-        rotP = np.array([[1,            0,              0          ],
+        rotP = np.array([[1,            0,              0],
                          [0,            cos(pitch),     -sin(pitch)],
-                         [0,            sin(pitch),     cos(pitch) ]])
+                         [0,            sin(pitch),     cos(pitch)]])
 
         # combined rotation matrix, must be in order roll, pitch, yaw
-        #rotRP = rotR * rotP
+        # rotRP = rotR * rotP
         rotRP = np.identity(3)
-
-        print("Pitch: ", pitch)
-        print("Roll: ", roll)
-
         # Stores all datapoints for the current frames
         for agent in self._measurements.non_player_agents:
             if should_detect_class(agent) and GEN_DATA:
