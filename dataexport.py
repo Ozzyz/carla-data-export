@@ -51,7 +51,7 @@ def save_image_data(filename, image):
     cv2.imwrite(filename, color_fmt)
 
 
-def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_HEIGHT, format="bin"):
+def save_lidar_data(filename, point_cloud, LIDAR_HEIGHT, format="bin"):
     """ Saves lidar data to given filename, according to the lidar data format.
         bin is used for KITTI-data format, while .ply is the regular point cloud format
         In Unreal, the coordinate system of the engine is defined as, which is the same as the lidar points
@@ -77,9 +77,6 @@ def save_lidar_data(filename, lidar_measurement, lidar_to_car_transform, LIDAR_H
         NOTE: We do not flip the coordinate system when saving to .ply.
     """
     logging.info("Wrote lidar data to %s", filename)
-
-    point_cloud = np.array(lidar_to_car_transform.transform_points(
-        lidar_measurement.data))  # originally returns a matrix
 
     if format == "bin":
         lidar_array = [[point[0], -point[1], point[2] -

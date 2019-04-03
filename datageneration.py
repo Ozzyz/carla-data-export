@@ -61,6 +61,7 @@ from bounding_box import create_kitti_datapoint
 from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
 from constants import *
 from settings import make_carla_settings
+import lidar_utils #from lidar_utils import project_point_cloud
 import time
 from math import cos, sin
 
@@ -85,6 +86,8 @@ LIDAR_PATH = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
 LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
+
+VISUALIZE_LIDAR = False
 
 
 class CarlaGame(object):
@@ -270,16 +273,41 @@ class CarlaGame(object):
         datapoints = []
 
         if self._main_image is not None and self._depth_image is not None:
-            array = image_converter.to_rgb_array(self._main_image)
-            array, datapoints = self._generate_datapoints(array)
+            # Convert main image
+            image = image_converter.to_rgb_array(self._main_image)
+            
+            # Retrieve and draw datapoints
+            image, datapoints = self._generate_datapoints(image)
+            
+            # Draw lidar
+            # Camera coordinate system is left, up, forwards
+            if VISUALIZE_LIDAR:
+                # Take the points from the point cloud and transform to car space
+                point_cloud = np.array(self._lidar_to_car_transform.transform_points(self._lidar_measurement.data))
+                # Transform to camera space by the inverse of camera_to_car transform
+                point_cloud_cam = self._camera_to_car_transform.inverse().transform_points(point_cloud)
+                image = lidar_utils.project_point_cloud(image, point_cloud_cam, self._intrinsic, 1)
+
+            #Display image
+            surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
+            self._display.blit(surface, (0, 0))
+            if self._map_view is not None:
+                self._display_agents(self._map_view)
+            pygame.display.flip()
+
+            # Determine whether to save files
             distance_driven = self._distance_since_last_recording()
             print("Distance driven since last recording: {}".format(distance_driven))
             has_driven_long_enough = distance_driven is None or distance_driven > DISTANCE_SINCE_LAST_RECORDING
             if (self._timer.step + 1) % STEPS_BETWEEN_RECORDINGS == 0:
                 if has_driven_long_enough and datapoints:
+                    # Avoid doing this twice or unnecessarily often
+                    if not VISUALIZE_LIDAR:
+                        # Take the points from the point cloud and transform to car space
+                        point_cloud = np.array(self._lidar_to_car_transform.transform_points(self._lidar_measurement.data))
                     self._update_agent_location()
                     # Save screen, lidar and kitti training labels together with calibration and groundplane files
-                    self._save_training_files(datapoints)
+                    self._save_training_files(datapoints, point_cloud)
                     self.captured_frame_no += 1
                     self._captured_frames_since_restart += 1
                     self._frames_since_last_capture = 0
@@ -290,11 +318,6 @@ class CarlaGame(object):
                 self._frames_since_last_capture += 1
                 logging.debug(
                     "Could not save training data - no visible agents of selected classes in scene")
-            surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
-            self._display.blit(surface, (0, 0))
-        if self._map_view is not None:
-            self._display_agents(self._map_view)
-        pygame.display.flip()
 
     def _distance_since_last_recording(self):
         if self._agent_location_on_last_capture is None:
@@ -309,10 +332,10 @@ class CarlaGame(object):
     def _update_agent_location(self):
         self._agent_location_on_last_capture = self._measurements.player_measurements.transform.location
 
-    def _generate_datapoints(self, array):
-        """ Returns a list of datapoints (labels and such) that are generated this frame together with the main image array """
+    def _generate_datapoints(self, image):
+        """ Returns a list of datapoints (labels and such) that are generated this frame together with the main image image """
         datapoints = []
-        array = array.copy()
+        image = image.copy()
 
         # Calculation to shift bboxes relative to pitch and roll of player
         rotation = self._measurements.player_measurements.transform.rotation
@@ -337,13 +360,14 @@ class CarlaGame(object):
         # Stores all datapoints for the current frames
         for agent in self._measurements.non_player_agents:
             if should_detect_class(agent) and GEN_DATA:
-                array, kitti_datapoint = create_kitti_datapoint(
-                    agent, self._intrinsic, self._extrinsic.matrix, array, self._depth_image, self._measurements.player_measurements, rotRP)
+                image, kitti_datapoint = create_kitti_datapoint(
+                    agent, self._intrinsic, self._extrinsic.matrix, image, self._depth_image, self._measurements.player_measurements, rotRP)
                 if kitti_datapoint:
                     datapoints.append(kitti_datapoint)
-        return array, datapoints
 
-    def _save_training_files(self, datapoints):
+        return image, datapoints
+
+    def _save_training_files(self, datapoints, point_cloud):
         logging.info("Attempting to save at timer step {}, frame no: {}".format(
             self._timer.step, self.captured_frame_no))
         groundplane_fname = GROUNDPLANE_PATH.format(self.captured_frame_no)
@@ -352,22 +376,18 @@ class CarlaGame(object):
         img_fname = IMAGE_PATH.format(self.captured_frame_no)
         calib_filename = CALIBRATION_PATH.format(self.captured_frame_no)
 
-        save_groundplanes(
-            groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
+        save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
         save_ref_files(OUTPUT_FOLDER, self.captured_frame_no)
-        save_image_data(
-            img_fname, image_converter.to_rgb_array(self._main_image))
+        save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
         save_kitti_data(kitti_fname, datapoints)
-        save_lidar_data(lidar_fname, self._lidar_measurement,
-                        self._lidar_to_car_transform, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
-        save_calibration_matrices(
-            calib_filename, self._intrinsic, self._extrinsic)
+        save_lidar_data(lidar_fname, point_cloud, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
+        save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
 
     def _display_agents(self, map_view):
-        array = array[:, :, :3]
+        image = image[:, :, :3]
         new_window_width = (float(WINDOW_HEIGHT) / float(self._map_shape[0])) * \
             float(self._map_shape[1])
-        surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+        surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
         w_pos = int(
             self._position[0]*(float(WINDOW_HEIGHT)/float(self._map_shape[0])))
         h_pos = int(self._position[1] *

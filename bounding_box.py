@@ -11,7 +11,7 @@ import logging
 
 def bbox_2d_from_agent(agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotRP):  # rotRP expects point to be in Kitti lidar format
     """ Creates bounding boxes for a given agent and camera/world calibration matrices.
-        Returns the modified array that contains the screen rendering with drawn on vertices from the agent """
+        Returns the modified image that contains the screen rendering with drawn on vertices from the agent """
     bbox = vertices_from_extension(ext)
     # transform the vertices respect to the bounding box transform
     bbox = bbox_transform.transform_points(bbox)
@@ -26,7 +26,7 @@ def bbox_2d_from_agent(agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform,
     return vertices_pos2d
 
 
-def calculate_occlusion_stats(array, vertices_pos2d, depth_map, draw_vertices=True):
+def calculate_occlusion_stats(image, vertices_pos2d, depth_map, draw_vertices=True):
     """ Draws each vertex in vertices_pos2d if it is in front of the camera 
         The color is based on whether the object is occluded or not.
         Returns the number of visible vertices and the number of vertices outside the camera.
@@ -45,13 +45,13 @@ def calculate_occlusion_stats(array, vertices_pos2d, depth_map, draw_vertices=Tr
                 num_visible_vertices += 1
                 vertex_color = VISIBLE_VERTEX_COLOR
             if draw_vertices:
-                draw_rect(array, (y_2d, x_2d), 4, vertex_color)
+                draw_rect(image, (y_2d, x_2d), 4, vertex_color)
         else:
             num_vertices_outside_camera += 1
     return num_visible_vertices, num_vertices_outside_camera
 
 
-def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_image, player_measurements, rotRP, draw_3D_bbox=True):
+def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, image, depth_image, player_measurements, rotRP, draw_3D_bbox=True):
     """ Calculates the bounding box of the given agent, and returns a KittiDescriptor which describes the object to be labeled """
     obj_type, agent_transform, bbox_transform, ext, location = transforms_from_agent(
         agent)
@@ -59,16 +59,16 @@ def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_ima
     if obj_type is None:
         logging.warning(
             "Could not get bounding box for agent. Object type is None")
-        return array, None
+        return image, None
     vertices_pos2d = bbox_2d_from_agent(
         agent, intrinsic_mat, extrinsic_mat, ext, bbox_transform, agent_transform, rotRP)
 
     depth_map = depth_image.data * 1000
     num_visible_vertices, num_vertices_outside_camera = calculate_occlusion_stats(
-        array, vertices_pos2d, depth_map, draw_vertices=draw_3D_bbox)
+        image, vertices_pos2d, depth_map, draw_vertices=draw_3D_bbox)
 
     midpoint = midpoint_from_agent_location(
-        array, location, extrinsic_mat, intrinsic_mat)
+        image, location, extrinsic_mat, intrinsic_mat)
 
     # At least N vertices has to be visible in order to draw bbox
     if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER and num_vertices_outside_camera < MIN_VISIBLE_VERTICES_FOR_RENDER:
@@ -78,9 +78,9 @@ def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_ima
         area = calc_bbox2d_area(bbox_2d)
         if area < MIN_BBOX_AREA_IN_PX:
             logging.info("Filtered out bbox with too low area {}".format(area))
-            return array, None
+            return image, None
         if draw_3D_bbox:
-            draw_3d_bounding_box(array, vertices_pos2d)
+            draw_3d_bounding_box(image, vertices_pos2d)
         from math import pi
         rotation_y = get_relative_rotation_y(agent, player_measurements) % pi
 
@@ -90,9 +90,9 @@ def create_kitti_datapoint(agent, intrinsic_mat, extrinsic_mat, array, depth_ima
         datapoint.set_type(obj_type)
         datapoint.set_3d_object_location(midpoint)
         datapoint.set_rotation_y(rotation_y)
-        return array, datapoint
+        return image, datapoint
     else:
-        return array, None
+        return image, None
 
 
 def get_relative_rotation_y(agent, player_measurements):
