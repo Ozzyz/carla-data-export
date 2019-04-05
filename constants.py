@@ -1,5 +1,5 @@
 """ DATA GENERATION SETTINGS"""
-GEN_DATA = True  # Whether or not to save training data
+GEN_DATA = False  # Whether or not to save training data
 # How many frames to wait between each capture of screen, bounding boxes and lidar
 STEPS_BETWEEN_RECORDINGS = 10
 CLASSES_TO_LABEL = ["Vehicle"]  # , "Pedestrian"]
