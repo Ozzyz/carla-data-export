@@ -61,7 +61,7 @@ from bounding_box import create_kitti_datapoint
 from carla_utils import KeyboardHelper, MeasurementsDisplayHelper
 from constants import *
 from settings import make_carla_settings
-import lidar_utils #from lidar_utils import project_point_cloud
+import lidar_utils  # from lidar_utils import project_point_cloud
 import time
 from math import cos, sin
 
@@ -86,8 +86,6 @@ LIDAR_PATH = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
 LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
-
-VISUALIZE_LIDAR = True
 
 
 class CarlaGame(object):
@@ -190,7 +188,7 @@ class CarlaGame(object):
     def _on_loop(self):
         self._timer.tick()
         measurements, sensor_data = self.client.read_data()
-        #logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
+        # logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
         #                                         (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
         # Reset the environment if the agent is stuck or can't find any agents or if we have captured enough frames in this one
         is_stuck = self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET
@@ -275,10 +273,10 @@ class CarlaGame(object):
         if self._main_image is not None and self._depth_image is not None:
             # Convert main image
             image = image_converter.to_rgb_array(self._main_image)
-            
+
             # Retrieve and draw datapoints
             image, datapoints = self._generate_datapoints(image)
-            
+
             # Draw lidar
             # Camera coordinate system is left, up, forwards
             if VISUALIZE_LIDAR:
@@ -286,6 +284,7 @@ class CarlaGame(object):
                 rotation = self._measurements.player_measurements.transform.rotation
                 pitch, roll, yaw = rotation.pitch, rotation.roll, rotation.yaw
                 # Since measurements are in degrees, convert to radians
+
                 pitch = degrees_to_radians(pitch)
                 roll = degrees_to_radians(roll)
                 yaw = degrees_to_radians(yaw)
@@ -293,27 +292,31 @@ class CarlaGame(object):
                 print('roll: ', roll)
                 print('yaw: ', yaw)
 
-                # rotation matrix for roll, would be yaw in a traditional coord system
-                rotR = np.array([[cos(roll),    -sin(roll),     0],
-                                [sin(roll),    cos(roll),      0],
-                                [0,            0,              1]])
-
-                # rotation matrix for pitch, would be roll in a traditional coord system
-                rotP = np.array([[1,            0,              0],
-                                [0,            cos(pitch),     -sin(pitch)],
-                                [0,            sin(pitch),     cos(pitch)]])
+                # Rotation matrix for pitch
+                rotP = np.array([[cos(pitch),            0,              sin(pitch)],
+                                 [0,            1,     0],
+                                 [-sin(pitch),            0,     cos(pitch)]])
+                # Rotation matrix for roll
+                rotR = np.array([[1,            0,              0],
+                                 [0,            cos(roll),     -sin(roll)],
+                                 [0,            sin(roll),     cos(roll)]])
 
                 # combined rotation matrix, must be in order roll, pitch, yaw
-                rotRP = rotR * rotP
-
+                rotRP = np.matmul(rotR, rotP)
                 # Take the points from the point cloud and transform to car space
-                point_cloud = np.array(self._lidar_to_car_transform.transform_points(self._lidar_measurement.data))
+                point_cloud = np.array(self._lidar_to_car_transform.transform_points(
+                    self._lidar_measurement.data))
+                point_cloud[:, 2] -= LIDAR_HEIGHT_POS
+                point_cloud = np.matmul(rotRP, point_cloud.T).T
+                # print(self._lidar_to_car_transform.matrix)
+                # print(self._camera_to_car_transform.matrix)
                 # Transform to camera space by the inverse of camera_to_car transform
                 point_cloud_cam = self._camera_to_car_transform.inverse().transform_points(point_cloud)
-                point_cloud_cam = (rotRP * point_cloud_cam.T).T
-                image = lidar_utils.project_point_cloud(image, point_cloud_cam, self._intrinsic, 1)
+                point_cloud_cam[:, 1] += LIDAR_HEIGHT_POS
+                image = lidar_utils.project_point_cloud(
+                    image, point_cloud_cam, self._intrinsic, 1)
 
-            #Display image
+            # Display image
             surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
             self._display.blit(surface, (0, 0))
             if self._map_view is not None:
@@ -328,8 +331,35 @@ class CarlaGame(object):
                 if has_driven_long_enough and datapoints:
                     # Avoid doing this twice or unnecessarily often
                     if not VISUALIZE_LIDAR:
+                        # Calculation to shift bboxes relative to pitch and roll of player
+                        rotation = self._measurements.player_measurements.transform.rotation
+                        pitch, roll, yaw = rotation.pitch, rotation.roll, rotation.yaw
+                        # Since measurements are in degrees, convert to radians
+
+                        pitch = degrees_to_radians(pitch)
+                        roll = degrees_to_radians(roll)
+                        yaw = degrees_to_radians(yaw)
+                        print('pitch: ', pitch)
+                        print('roll: ', roll)
+                        print('yaw: ', yaw)
+
+                        # Rotation matrix for pitch
+                        rotP = np.array([[cos(pitch),            0,              sin(pitch)],
+                                         [0,            1,     0],
+                                         [-sin(pitch),            0,     cos(pitch)]])
+                        # Rotation matrix for roll
+                        rotR = np.array([[1,            0,              0],
+                                         [0,            cos(
+                                             roll),     -sin(roll)],
+                                         [0,            sin(roll),     cos(roll)]])
+
+                        # combined rotation matrix, must be in order roll, pitch, yaw
+                        rotRP = np.matmul(rotR, rotP)
                         # Take the points from the point cloud and transform to car space
-                        point_cloud = np.array(self._lidar_to_car_transform.transform_points(self._lidar_measurement.data))
+                        point_cloud = np.array(self._lidar_to_car_transform.transform_points(
+                            self._lidar_measurement.data))
+                        point_cloud[:, 2] -= LIDAR_HEIGHT_POS
+                        point_cloud = np.matmul(rotRP, point_cloud.T).T
                     self._update_agent_location()
                     # Save screen, lidar and kitti training labels together with calibration and groundplane files
                     self._save_training_files(datapoints, point_cloud)
@@ -337,7 +367,7 @@ class CarlaGame(object):
                     self._captured_frames_since_restart += 1
                     self._frames_since_last_capture = 0
                 else:
-                    logging.info("Could save datapoint, but agent has not driven {} meters since last recording (Currently {} meters)".format(
+                    logging.debug("Could save datapoint, but agent has not driven {} meters since last recording (Currently {} meters)".format(
                         DISTANCE_SINCE_LAST_RECORDING, distance_driven))
             else:
                 self._frames_since_last_capture += 1
@@ -383,12 +413,16 @@ class CarlaGame(object):
         img_fname = IMAGE_PATH.format(self.captured_frame_no)
         calib_filename = CALIBRATION_PATH.format(self.captured_frame_no)
 
-        save_groundplanes(groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
+        save_groundplanes(
+            groundplane_fname, self._measurements.player_measurements, LIDAR_HEIGHT_POS)
         save_ref_files(OUTPUT_FOLDER, self.captured_frame_no)
-        save_image_data(img_fname, image_converter.to_rgb_array(self._main_image))
+        save_image_data(
+            img_fname, image_converter.to_rgb_array(self._main_image))
         save_kitti_data(kitti_fname, datapoints)
-        save_lidar_data(lidar_fname, point_cloud, LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
-        save_calibration_matrices(calib_filename, self._intrinsic, self._extrinsic)
+        save_lidar_data(lidar_fname, point_cloud,
+                        LIDAR_HEIGHT_POS, LIDAR_DATA_FORMAT)
+        save_calibration_matrices(
+            calib_filename, self._intrinsic, self._extrinsic)
 
     def _display_agents(self, map_view):
         image = image[:, :, :3]

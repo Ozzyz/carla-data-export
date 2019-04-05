@@ -29,9 +29,9 @@ def make_carla_settings(args):
     lidar.set_position(0, 0.0, LIDAR_HEIGHT_POS)
     lidar.set_rotation(0, 0, 0)
     lidar.set(
-        Channels=20, #40
+        Channels=40,
         Range=MAX_RENDER_DEPTH_IN_METERS,
-        PointsPerSecond=20000, # 720000
+        PointsPerSecond=720000,
         RotationFrequency=10,
         UpperFovLimit=7,
         LowerFovLimit=-16)
@@ -55,5 +55,6 @@ def make_carla_settings(args):
         (2.0 * math.tan(90.0 * math.pi / 360.0))
     k[0, 0] = k[1, 1] = f
     camera_to_car_transform = camera0.get_unreal_transform()
-    lidar_to_car_transform = lidar.get_transform() * Transform(Rotation(yaw=90), Scale(z=-1))
+    lidar_to_car_transform = lidar.get_transform(
+    ) * Transform(Rotation(yaw=90), Scale(z=-1))
     return settings, k, camera_to_car_transform, lidar_to_car_transform

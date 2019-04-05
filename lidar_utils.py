@@ -5,7 +5,7 @@ from datageneration import WINDOW_WIDTH, WINDOW_HEIGHT
 import numpy as np
 
 
-def project_point_cloud(image, point_cloud, intrinsic_mat, draw_each_nth=1):
+def project_point_cloud(image, point_cloud, intrinsic_mat, draw_each_nth=5):
     """ Projects the lidar measurements onto the screen and draws them.
     Since the points are just X,Y,Z coordinates relative to the lidar, this can be done by a simple projection. 
     Note that this assumes that the camera and the lidar have exactly the same position and rotation!!
