@@ -29,9 +29,9 @@ def make_carla_settings(args):
     lidar.set_position(0, 0.0, LIDAR_HEIGHT_POS)
     lidar.set_rotation(0, 0, 0)
     lidar.set(
-        Channels=40,
+        Channels=20, #40
         Range=MAX_RENDER_DEPTH_IN_METERS,
-        PointsPerSecond=720000,
+        PointsPerSecond=20000, # 720000
         RotationFrequency=10,
         UpperFovLimit=7,
         LowerFovLimit=-16)

@@ -25,6 +25,6 @@ def project_point_cloud(image, point_cloud, intrinsic_mat, draw_each_nth=1):
         if 1000 > depth > 0:
             x_2d = WINDOW_WIDTH - cur_pos2d[0]
             y_2d = WINDOW_HEIGHT - cur_pos2d[1]
-            draw_rect(image, (y_2d, x_2d), int(10/depth))
+            draw_rect(image, (y_2d, x_2d), int(20/depth))
 
     return image

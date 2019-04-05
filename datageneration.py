@@ -87,7 +87,7 @@ LABEL_PATH = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_PATH = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 CALIBRATION_PATH = os.path.join(OUTPUT_FOLDER, 'calib/{0:06}.txt')
 
-VISUALIZE_LIDAR = False
+VISUALIZE_LIDAR = True
 
 
 class CarlaGame(object):
@@ -190,14 +190,14 @@ class CarlaGame(object):
     def _on_loop(self):
         self._timer.tick()
         measurements, sensor_data = self.client.read_data()
-        logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
-                                                 (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
+        #logging.info("Frame no: {}, = {}".format(self.captured_frame_no,
+        #                                         (self.captured_frame_no + 1) % NUM_RECORDINGS_BEFORE_RESET))
         # Reset the environment if the agent is stuck or can't find any agents or if we have captured enough frames in this one
         is_stuck = self._frames_since_last_capture >= NUM_EMPTY_FRAMES_BEFORE_RESET
         is_enough_datapoints = (
             self._captured_frames_since_restart + 1) % NUM_RECORDINGS_BEFORE_RESET == 0
 
-        if is_stuck or is_enough_datapoints:
+        if (is_stuck or is_enough_datapoints) and GEN_DATA:
             logging.warning("Is stucK: {}, is_enough_datapoints: {}".format(
                 is_stuck, is_enough_datapoints))
             self._on_new_episode()
@@ -282,10 +282,35 @@ class CarlaGame(object):
             # Draw lidar
             # Camera coordinate system is left, up, forwards
             if VISUALIZE_LIDAR:
+                # Calculation to shift bboxes relative to pitch and roll of player
+                rotation = self._measurements.player_measurements.transform.rotation
+                pitch, roll, yaw = rotation.pitch, rotation.roll, rotation.yaw
+                # Since measurements are in degrees, convert to radians
+                pitch = degrees_to_radians(pitch)
+                roll = degrees_to_radians(roll)
+                yaw = degrees_to_radians(yaw)
+                print('pitch: ', pitch)
+                print('roll: ', roll)
+                print('yaw: ', yaw)
+
+                # rotation matrix for roll, would be yaw in a traditional coord system
+                rotR = np.array([[cos(roll),    -sin(roll),     0],
+                                [sin(roll),    cos(roll),      0],
+                                [0,            0,              1]])
+
+                # rotation matrix for pitch, would be roll in a traditional coord system
+                rotP = np.array([[1,            0,              0],
+                                [0,            cos(pitch),     -sin(pitch)],
+                                [0,            sin(pitch),     cos(pitch)]])
+
+                # combined rotation matrix, must be in order roll, pitch, yaw
+                rotRP = rotR * rotP
+
                 # Take the points from the point cloud and transform to car space
                 point_cloud = np.array(self._lidar_to_car_transform.transform_points(self._lidar_measurement.data))
                 # Transform to camera space by the inverse of camera_to_car transform
                 point_cloud_cam = self._camera_to_car_transform.inverse().transform_points(point_cloud)
+                point_cloud_cam = (rotRP * point_cloud_cam.T).T
                 image = lidar_utils.project_point_cloud(image, point_cloud_cam, self._intrinsic, 1)
 
             #Display image
@@ -297,7 +322,7 @@ class CarlaGame(object):
 
             # Determine whether to save files
             distance_driven = self._distance_since_last_recording()
-            print("Distance driven since last recording: {}".format(distance_driven))
+            #print("Distance driven since last recording: {}".format(distance_driven))
             has_driven_long_enough = distance_driven is None or distance_driven > DISTANCE_SINCE_LAST_RECORDING
             if (self._timer.step + 1) % STEPS_BETWEEN_RECORDINGS == 0:
                 if has_driven_long_enough and datapoints:
@@ -337,25 +362,7 @@ class CarlaGame(object):
         datapoints = []
         image = image.copy()
 
-        # Calculation to shift bboxes relative to pitch and roll of player
-        rotation = self._measurements.player_measurements.transform.rotation
-        pitch, roll = rotation.pitch, rotation.roll
-        # Since measurements are in degrees, convert to radians
-        pitch = degrees_to_radians(pitch)
-        roll = degrees_to_radians(roll)
-
-        # rotation matrix for roll, would be yaw in a traditional coord system
-        rotR = np.array([[cos(roll),    -sin(roll),     0],
-                         [sin(roll),    cos(roll),      0],
-                         [0,            0,              1]])
-
-        # rotation matrix for pitch, would be roll in a traditional coord system
-        rotP = np.array([[1,            0,              0],
-                         [0,            cos(pitch),     -sin(pitch)],
-                         [0,            sin(pitch),     cos(pitch)]])
-
-        # combined rotation matrix, must be in order roll, pitch, yaw
-        # rotRP = rotR * rotP
+        # Remove this
         rotRP = np.identity(3)
         # Stores all datapoints for the current frames
         for agent in self._measurements.non_player_agents:
