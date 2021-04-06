@@ -6,9 +6,13 @@ This repository contains the code we used for generating training data from the 
 Download and extract CARLA 0.8.4 from https://github.com/carla-simulator/carla/releases/tag/0.8.4  
 This project expects the carla folder to be inside this project i.e PythonClient/carla-data-export/carla  
 Install all the necessary requirements for your python environment using:
+
+
 ```
 pip install -r requirements.txt
 ```
+
+⚠️ Note: The project has only been tested with Python 3.x <= 3.6
 
 # Generating data
 Before the data generation scripts can be run you must start a CARLA server. This can be done by running the executable in the CARLA root folder with the appropriate parameters. Running the server on windows in a small 200x200 window would for example be:
